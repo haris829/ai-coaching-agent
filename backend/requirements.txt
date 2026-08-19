@@ -1,0 +1,19 @@
+# Courses Quiz Agent — backend runtime dependencies (UC-01 … UC-07)
+#
+# Deliberately small: FastAPI + SQLAlchemy + Alembic, plus one HTTP client. CSV handling uses the
+# Python standard library `csv` module, so there is no extra parsing dependency.
+# No Redis / queues / microservices — none of the seven capabilities requires them.
+#
+# `httpx` is UC-07's only outbound need: the AI coaching adapter calls the provider's HTTP API
+# directly rather than through a vendor SDK, so the domain stays behind the `CoachingLLM` port and no
+# package's release cadence sits between this system and its coach. With no provider configured
+# nothing here reaches the network at all.
+
+fastapi==0.118.0
+uvicorn[standard]==0.37.0
+sqlalchemy==2.0.43
+alembic==1.16.5
+pydantic==2.11.9
+pydantic-settings==2.10.1
+python-multipart==0.0.20
+httpx==0.28.1

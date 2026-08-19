@@ -1,0 +1,28 @@
+node_modules/
+dist/
+coverage/
+*.log
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local development database (SQLite). The company database is configured via DATABASE_URL.
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+# Pre-merge location of the local database; kept ignored so a stale file cannot be committed.
+backend/data/
+
+# Secrets and machine-local configuration. `backend/.env.example` is the tracked template.
+.env
+.env.local
+backend/.env
+
+.DS_Store
+
+# Stray TypeScript output. `tsc -b` is configured with noEmit, but a direct `tsc` invocation
+# drops .js/.d.ts files next to their sources, where Vite may resolve them ahead of the .tsx.
+frontend/src/**/*.js
+frontend/src/**/*.d.ts

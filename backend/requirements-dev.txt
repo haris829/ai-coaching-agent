@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# Test + tooling dependencies
+pytest==8.4.2
+pytest-cov==6.3.0
+# anyio arrives with starlette; pinned here because its pytest plugin is what runs UC-07's
+# asynchronous coaching tests.
+anyio==4.14.2

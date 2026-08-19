@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m venv .venv)",
+      "Bash(.venv/Scripts/python.exe -m pip install --quiet --upgrade pip)",
+      "Bash(.venv/Scripts/python.exe -m pip install --quiet \"fastapi>=0.115\" \"uvicorn[standard]>=0.32\" \"sqlalchemy>=2.0\" \"pydantic>=2.9\" \"pytest>=8.3\" \"httpx>=0.28\")",
+      "Bash(.venv/Scripts/python.exe -c \"import fastapi,sqlalchemy,pydantic,pytest,httpx;print\\('fastapi',fastapi.__version__\\);print\\('sqlalchemy',sqlalchemy.__version__\\);print\\('pydantic',pydantic.VERSION\\)\")",
+      "Bash(../.venv/Scripts/python.exe -c ' *)",
+      "Bash(\"../.venv/Scripts/python.exe\" -m pytest)",
+      "Bash(npm run *)",
+      "Bash(\"../.venv/Scripts/python.exe\" scripts/verify_uc01.py http://127.0.0.1:8123)",
+      "Bash(API_URL=\"http://127.0.0.1:8123\" npx vite --port 5199 --host 127.0.0.1)",
+      "Bash(curl -s http://127.0.0.1:5199/)",
+      "Bash(curl -s http://127.0.0.1:5199/api/health)",
+      "Bash(curl -s -H \"Authorization: Bearer admin-token\" http://127.0.0.1:5199/api/admin/quizzes/1/configuration)",
+      "Bash(curl -s -H \"Authorization: Bearer learner-token\" http://127.0.0.1:5199/api/quizzes/1/rules)",
+      "Bash(npm test *)",
+      "Bash(git init *)",
+      "PowerShell(Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='node.exe'\" | Where-Object { $_.CommandLine -match 'uvicorn|vite' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; \"background servers stopped\")",
+      "Bash(npx playwright *)",
+      "Bash(node drive.mjs)",
+      "Bash(npm init *)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/health)",
+      "Bash(echo \"API   : $\\(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/health\\) http://127.0.0.1:8000\")",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5173/)",
+      "Bash(echo \"Web   : $\\(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5173/\\) http://127.0.0.1:5173\")",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/docs)"
+    ]
+  }
+}
