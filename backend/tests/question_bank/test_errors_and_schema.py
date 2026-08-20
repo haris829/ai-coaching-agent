@@ -102,7 +102,7 @@ def test_invalid_query_parameter_returns_400(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_admin_token_guard_protects_writes_when_configured(client: TestClient, monkeypatch) -> None:
+def test_admin_token_guard_protects_reads_and_writes_when_configured(client: TestClient, monkeypatch) -> None:
     # Patch the settings singleton itself: identity resolution and every guard read the same
     # object, so there is one place to turn the token requirement on.
     from app.core import config as config_module
@@ -127,8 +127,19 @@ def test_admin_token_guard_protects_writes_when_configured(client: TestClient, m
     )
     assert authorised.status_code == 201
 
-    # Reads stay open — the platform's real auth decides that policy at merge time.
-    assert client.get(f"{API}/questions").status_code == 200
+    # Reads are guarded too, and this is the line that changed at merge time.
+    #
+    # UC-02 shipped with its reads open and said so here: "the platform's real auth decides that
+    # policy at merge time". This is that merge, and the policy is that they are not open. The
+    # payload carries ``isCorrect`` on every option, ``correctPosition`` for a drag-to-order and
+    # ``isPrimary`` on a scenario's sub-questions — that is the answer key. With the learner API
+    # and the admin API behind one gateway, an authenticated learner could otherwise have read the
+    # answer to every question in the bank before sitting the quiz.
+    assert client.get(f"{API}/questions").status_code == 401
+    assert (
+        client.get(f"{API}/questions", headers={"Authorization": "Bearer s3cret"}).status_code
+        == 200
+    )
 
 
 def test_actor_is_recorded_from_the_admin_header(client: TestClient) -> None:

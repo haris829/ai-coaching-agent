@@ -45,6 +45,7 @@ router = APIRouter(
 )
 def delivery_pool(
     db: DbSession,
+    actor: Actor,
     topic_id: Annotated[list[str] | None, Query(alias="topicId")] = None,
     topic_slug: Annotated[list[str] | None, Query(alias="topicSlug")] = None,
     type: Annotated[list[str] | None, Query()] = None,
@@ -111,5 +112,5 @@ def record_response(
     summary="Historical attempt report — rendered from frozen snapshots, survives retirement",
     response_model=dict,
 )
-def attempt_report(db: DbSession, attempt_ref: str) -> dict[str, Any]:
+def attempt_report(db: DbSession, actor: Actor, attempt_ref: str) -> dict[str, Any]:
     return delivery_service.build_attempt_report(db, attempt_ref)

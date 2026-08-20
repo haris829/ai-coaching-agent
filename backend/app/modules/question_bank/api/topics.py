@@ -33,6 +33,7 @@ router = APIRouter(
 
 @router.get("", summary="List topics with question counts", response_model=list[TopicOut])
 def list_topics(
+    actor: Actor,
     db: DbSession,
     include_inactive: Annotated[bool, Query(alias="includeInactive")] = True,
     search: Annotated[str | None, Query()] = None,
@@ -56,7 +57,7 @@ def create_topic(db: DbSession, actor: Actor, payload: Annotated[TopicCreate, Bo
 
 
 @router.get("/{topic_id}", summary="Get a topic", response_model=TopicOut)
-def get_topic(db: DbSession, topic_id: str) -> TopicOut:
+def get_topic(db: DbSession, actor: Actor, topic_id: str) -> TopicOut:
     topic = topic_service.get_topic(db, topic_id)
     return serializers.topic_out(topic, topic_service.count_topic_questions(db, topic_id))
 

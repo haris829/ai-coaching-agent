@@ -124,6 +124,7 @@ async def import_questions(
 @router.get("", summary="List past import runs", response_model=dict)
 def list_imports(
     db: DbSession,
+    actor: Actor,
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> dict[str, Any]:
@@ -142,6 +143,6 @@ def list_imports(
     summary="Re-read an import result, including every row-level error",
     response_model=ImportResult,
 )
-def get_import(db: DbSession, import_id: str) -> ImportResult:
+def get_import(db: DbSession, actor: Actor, import_id: str) -> ImportResult:
     run = import_service.get_import(db, import_id)
     return serializers.import_result(import_service.rebuild_outcome(db, run))

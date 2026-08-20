@@ -58,6 +58,7 @@ router = APIRouter(
 )
 def list_questions(
     db: DbSession,
+    actor: Actor,
     search: Annotated[
         str | None, Query(description="Matches question text, scenario, reference or external ref")
     ] = None,
@@ -123,7 +124,7 @@ def create_question(
     summary="Get a question (including retired ones)",
     response_model=QuestionOut,
 )
-def get_question(db: DbSession, question_id: str) -> QuestionOut:
+def get_question(db: DbSession, actor: Actor, question_id: str) -> QuestionOut:
     question = question_service.get_question(db, question_id)
     return serializers.question_out(question, usage=question_service.usage_counts(db, question.id))
 
@@ -192,7 +193,7 @@ def delete_question(db: DbSession, actor: Actor, question_id: str) -> DeleteResu
     summary="Snapshot history — every frozen version of the question",
     response_model=list[SnapshotOut],
 )
-def list_versions(db: DbSession, question_id: str) -> list[SnapshotOut]:
+def list_versions(db: DbSession, actor: Actor, question_id: str) -> list[SnapshotOut]:
     return [
         serializers.snapshot_out(snapshot)
         for snapshot in question_service.list_snapshots(db, question_id)
@@ -204,7 +205,9 @@ def list_versions(db: DbSession, question_id: str) -> list[SnapshotOut]:
     summary="One frozen version of the question",
     response_model=SnapshotOut,
 )
-def get_version(db: DbSession, question_id: str, version: int) -> SnapshotOut:
+def get_version(
+    db: DbSession, actor: Actor, question_id: str, version: int
+) -> SnapshotOut:
     return serializers.snapshot_out(question_service.get_snapshot(db, question_id, version))
 
 
@@ -213,7 +216,7 @@ def get_version(db: DbSession, question_id: str, version: int) -> SnapshotOut:
     summary="Attempts that used this question",
     response_model=list[UsageOut],
 )
-def list_usages(db: DbSession, question_id: str) -> list[UsageOut]:
+def list_usages(db: DbSession, actor: Actor, question_id: str) -> list[UsageOut]:
     return [
         serializers.usage_out(usage)
         for usage in delivery_service.list_question_usages(db, question_id)
