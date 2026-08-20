@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from alembic import command
 from app.db.metadata import target_metadata  # registers EVERY capability's tables
@@ -69,9 +69,35 @@ def model_schema(tmp_path: Path) -> Iterator[dict[str, object]]:
         engine.dispose()
 
 
+def _triggers_by_table(engine: object) -> dict[str, list[str]]:
+    """The triggers each table carries, read from the live database.
+
+    Compared alongside columns and constraints because a trigger *is* a schema guarantee here —
+    every immutability rule in this system is one — and because losing one is silent. SQLite's
+    batch migrations rebuild a table to add a column and drop its triggers on the way, so a
+    migration that adds a field to an append-only table quietly removes the append-only part.
+
+    That is not hypothetical: UC-09 added three columns to ``qc_configuration_versions`` and
+    dropped ``trg_qc_config_version_no_update``, leaving every migrated database willing to edit a
+    published configuration version. The suites built their schema from the models and never saw
+    it. This comparison is what makes them see it.
+    """
+    grouped: dict[str, list[str]] = {}
+    if engine.dialect.name != "sqlite":  # type: ignore[attr-defined]
+        return grouped
+    with engine.connect() as connection:  # type: ignore[attr-defined]
+        rows = connection.execute(
+            text("SELECT name, tbl_name FROM sqlite_master WHERE type = 'trigger'")
+        ).all()
+    for name, table in rows:
+        grouped.setdefault(table, []).append(name)
+    return {table: sorted(names) for table, names in grouped.items()}
+
+
 def _describe(engine: object) -> dict[str, object]:
     """Summarise a live schema in a form that is comparable across databases."""
     inspector = inspect(engine)  # type: ignore[arg-type]
+    triggers = _triggers_by_table(engine)
     tables: dict[str, object] = {}
 
     for table in sorted(inspector.get_table_names()):
@@ -116,6 +142,7 @@ def _describe(engine: object) -> dict[str, object]:
             "foreign_keys": foreign_keys,
             "check_constraints": check_constraints,
             "primary_key": primary_key,
+            "triggers": triggers.get(table, []),
         }
 
     return tables
@@ -136,6 +163,29 @@ def test_migration_matches_the_models_exactly(
             "disagree. Regenerate the migration with "
             "`alembic revision --autogenerate`."
         )
+
+
+def test_the_trigger_comparison_is_actually_comparing_something(
+    model_schema: dict[str, object]
+) -> None:
+    """A comparison of two empty lists passes and means nothing.
+
+    Named separately from the drift test because the failure modes differ: that one catches a
+    trigger the migration lost, and this one catches the comparison quietly stopping working — if
+    ``_triggers_by_table`` returned nothing, every table would agree and the drift test would go
+    green on a database with no immutability guarantees at all.
+    """
+    carriers = {
+        "qc_configuration_versions": "a published configuration version can never be edited",
+        "qr_attempt_results": "a scored result is final",
+        "qg_attempt_outcomes": "a pass or fail is a derived fact, written once",
+        "qf_feedback_reports": "a generated report is frozen",
+        "qk_coaching_messages": "a coaching exchange is a record of what was said",
+    }
+    for table, why in carriers.items():
+        described = model_schema[table]
+        assert isinstance(described, dict)
+        assert described["triggers"], f"{table} declares no trigger, but {why}"
 
 
 def test_the_critical_uniqueness_guarantees_are_migrated(

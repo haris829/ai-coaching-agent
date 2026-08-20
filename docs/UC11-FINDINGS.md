@@ -101,3 +101,60 @@ Neither is a defect; both are things that must be true of a deployed environment
 Both are values the operator generates; neither is a credential obtained from a third party. The
 only genuinely external credential is `COACHING_LLM_API_KEY`, and with it unset UC-07 honestly
 reports coaching unavailable while the other nine capabilities work normally.
+
+---
+
+## Defects UC-11 found in this merge
+
+Three, all found by the sweep and the scenario suites rather than by any capability's own tests.
+The pattern in each is the same: a rule enforced somewhere the per-capability suites cannot see.
+
+### F-16 — the disconnect auto-submit path could never commit (critical)
+
+`POST /api/v1/formal-attempts/{id}/disconnect` returned **500** and wrote nothing. UC-09 added
+`DISCONNECT_AUTO_SUBMIT` as a third submission reason and widened the CHECK constraint on
+`qd_attempts` (revision `c156bd33962a`) but not the matching one on `qd_attempt_submissions`, which
+UC-03 writes in the same transaction. Every disconnect failed at the flush.
+
+The consequence is the exact loss the auto-submit rule exists to prevent: a learner whose device
+dropped out of a supervised sitting lost the attempt, and a formal assessment cannot be resumed.
+
+Invisible to UC-09's own suite, which drives UC-03 through port fakes — and a fake has no CHECK
+constraints. No chain test disconnected. `tests/global_dod/test_scenarios.py` scenario E does.
+
+*Fixed:* the constraint widened in `attempt_delivery/models.py` and in migration `7b41c0d9e5a2`.
+
+### F-17 — every UC-09 provider-outage error raised `TypeError` instead (high)
+
+`ProviderUnavailableError` gained a required `provider` argument during UC-10. UC-09's seven
+subclasses declared only a `code`, so `AttemptDeliveryUnavailableError()` — eighteen call sites —
+raised `TypeError`, which the handler reports as an opaque 500. The failure path was itself broken:
+a real dependency outage was reported as a bug in the application rather than as a retryable 503,
+and the original exception was lost.
+
+Three call sites passed a *message* as the first positional argument, which bound it to `provider`.
+Those produced a 503 whose body named the sentence as the boundary and showed the generic text.
+
+*Fixed:* `NamedProviderUnavailableError` in `app/core/errors.py` — a subclass declares its boundary
+once and is raised bare or with a message. UC-08 had solved this by hand in two classes; those two
+hand-written constructors are now gone, which is one less place for the two to diverge.
+
+### F-18 — UC-01's configuration immutability trigger was missing from every migrated database (critical)
+
+`trg_qc_config_version_no_update` did not exist on any database built by the migrations. UC-09's
+revision `108e83e56e69` adds three columns to `qc_configuration_versions`; on SQLite that is a batch
+rebuild, which silently drops the table's triggers. Revision `f2edce6a1ae0` knew this and reinstated
+the trigger — with a comment explaining exactly this hazard — and `108e83e56e69` did not.
+
+So a deployed instance would accept an `UPDATE` to a published configuration version: the single
+invariant every locked attempt, every stored result and every certificate depends on. Nothing
+failed and nothing logged.
+
+Invisible to the whole Python suite, which builds its schema from the models and therefore had the
+trigger. Only `npm run verify:e2e`, which migrates, saw it — which is what that gate is for.
+
+*Fixed:* `108e83e56e69` reinstates the trigger on the way up and on the way down; `7b41c0d9e5a2`
+repairs a database that already ran it. And `tests/test_schema_migration.py` now compares each
+table's **triggers** alongside its columns and constraints, so the next batch rebuild that drops one
+fails in the fast suite rather than in the live gate — with a companion test asserting the
+comparison is not silently comparing empty lists.

@@ -37,8 +37,8 @@ from app.core.errors import (
     ConflictError,
     FieldIssue,
     ForbiddenError,
+    NamedProviderUnavailableError,
     NotFoundError,
-    ProviderUnavailableError,
     ValidationError,
 )
 
@@ -202,7 +202,7 @@ class EmailNotConfirmedError(ConflictError):
         )
 
 
-class LearnerProfileUnavailableError(ProviderUnavailableError):
+class LearnerProfileUnavailableError(NamedProviderUnavailableError):
     """The profile source could not be read, so identity cannot be confirmed.
 
     Retryable, and deliberately *not* degradable: "we could not check the learner's name" must never
@@ -210,6 +210,8 @@ class LearnerProfileUnavailableError(ProviderUnavailableError):
     """
 
     code = "LEARNER_PROFILE_UNAVAILABLE"
+    provider = "platform-directory"
+    default_message = "The learner directory could not be read, so identity cannot be confirmed."
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +359,7 @@ class DisconnectSubmissionConflictError(ConflictError):
         )
 
 
-class AutoSubmitFailedError(ProviderUnavailableError):
+class AutoSubmitFailedError(NamedProviderUnavailableError):
     """UC-03 could not commit the auto-submission.
 
     Retryable, and the claim stays on the record: the attempt is AUTO_SUBMIT_IN_PROGRESS, cannot be
@@ -366,12 +368,18 @@ class AutoSubmitFailedError(ProviderUnavailableError):
     """
 
     code = "AUTO_SUBMIT_FAILED"
+    provider = "uc03"
+    default_message = (
+        "The auto-submission could not be committed. It will be completed on the next attempt."
+    )
 
 
-class SubmissionFailedError(ProviderUnavailableError):
+class SubmissionFailedError(NamedProviderUnavailableError):
     """UC-03 could not commit the learner's submission. Retryable; the attempt stays active."""
 
     code = "FORMAL_SUBMISSION_FAILED"
+    provider = "uc03"
+    default_message = "The submission could not be committed. Nothing was lost — please try again."
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +456,7 @@ class ReviewAlreadyDecidedError(ConflictError):
         )
 
 
-class ReviewQueueUnavailableError(ProviderUnavailableError):
+class ReviewQueueUnavailableError(NamedProviderUnavailableError):
     """The assessor review queue could not be reached (§13).
 
     Never raised out of the pass workflow. The PENDING_REVIEW record is persisted before the queue
@@ -458,6 +466,11 @@ class ReviewQueueUnavailableError(ProviderUnavailableError):
     """
 
     code = "REVIEW_QUEUE_UNAVAILABLE"
+    provider = "assessor-review-queue"
+    default_message = (
+        "The assessor review queue could not be reached. The review is recorded and can be "
+        "republished."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +507,7 @@ class CertificateNotApprovedError(ForbiddenError):
         )
 
 
-class CertificateWorkflowFailedError(ProviderUnavailableError):
+class CertificateWorkflowFailedError(NamedProviderUnavailableError):
     """The certificate workflow could not be triggered.
 
     Retryable. The approval stands: an approved formal assessment stays approved regardless of
@@ -502,6 +515,11 @@ class CertificateWorkflowFailedError(ProviderUnavailableError):
     """
 
     code = "CERTIFICATE_WORKFLOW_FAILED"
+    provider = "uc05"
+    default_message = (
+        "The certificate workflow could not be triggered. The approval stands and this can be "
+        "retried."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -621,16 +639,20 @@ class FormalAttemptCreationFailedError(ConflictError):
         )
 
 
-class AttemptDeliveryUnavailableError(ProviderUnavailableError):
+class AttemptDeliveryUnavailableError(NamedProviderUnavailableError):
     """UC-03 could not be reached to deliver or read the attempt."""
 
     code = "ATTEMPT_DELIVERY_UNAVAILABLE"
+    provider = "uc03"
+    default_message = "Attempt delivery is currently unavailable."
 
 
-class ScoringUnavailableError(ProviderUnavailableError):
+class ScoringUnavailableError(NamedProviderUnavailableError):
     """UC-04 / UC-05 could not be reached, so no formal result can be recorded yet."""
 
     code = "RESULT_SOURCE_UNAVAILABLE"
+    provider = "uc04"
+    default_message = "The result could not be read, so no formal result can be recorded yet."
 
 
 def error_context(error: Any) -> dict[str, Any]:

@@ -398,7 +398,10 @@ class AttemptSubmission(Base):
     __table_args__ = (
         CheckConstraint("state IN ('PENDING', 'SUBMITTED', 'FAILED')", name="ck_submission_state"),
         CheckConstraint(
-            "submission_reason IN ('LEARNER_CONFIRMED', 'TIME_EXPIRED')",
+            # DISCONNECT_AUTO_SUBMIT arrived with UC-09. It was added to ``qd_attempts`` and missed
+            # here, which left the whole disconnect path failing at the flush — the learner's
+            # autosaved work committed nowhere and the endpoint answered 500.
+            "submission_reason IN ('LEARNER_CONFIRMED', 'TIME_EXPIRED', 'DISCONNECT_AUTO_SUBMIT')",
             name="ck_submission_reason",
         ),
         CheckConstraint("attempt_count >= 1", name="ck_submission_attempt_count"),

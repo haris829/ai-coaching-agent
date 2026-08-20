@@ -29,7 +29,7 @@ correlates the response with the server log line.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from app.core.time import to_iso, utcnow
 
@@ -314,6 +314,46 @@ class ProviderUnavailableError(AppError):
             context={"provider": provider},
             log_context={"provider": provider, "cause": str(cause) if cause else None},
         )
+
+
+class NamedProviderUnavailableError(ProviderUnavailableError):
+    """A provider outage whose boundary is fixed by the class rather than by the caller.
+
+    ``AttemptDeliveryUnavailableError`` is always about UC-03. Repeating ``"uc03"`` at each of its
+    eighteen call sites adds nothing, and the base class's ``provider``-first signature makes two
+    quiet mistakes easy — both of which were live in this repository until UC-11's disconnect
+    scenario found them:
+
+    * ``AttemptDeliveryUnavailableError()`` raised ``TypeError`` for a missing ``provider``, which
+      an exception handler reports as an opaque 500. The failure path was itself broken, so a real
+      outage was reported as a bug in the application rather than as a retryable dependency
+      failure.
+    * ``AttemptDeliveryUnavailableError("No attempt delivery module is bound.")`` bound that
+      sentence to ``provider``, so the error body named the message as the boundary and showed the
+      generic text instead.
+
+    Subclasses set ``provider`` once and are raised bare, or with a message. Supplying neither a
+    class-level provider nor one at the call site is a programming error and says so.
+    """
+
+    #: The boundary this class names — "uc03", "uc04", never a vendor or a hostname.
+    provider: ClassVar[str] = ""
+
+    #: What to say when the caller supplies nothing. Subclasses that can be more specific than the
+    #: base class's wording override it.
+    default_message: ClassVar[str | None] = None
+
+    def __init__(
+        self,
+        message: str | None = None,
+        cause: BaseException | None = None,
+    ) -> None:
+        if not self.provider:
+            raise TypeError(
+                f"{type(self).__name__} must set a class-level `provider` naming the boundary "
+                "it stands for, or subclass ProviderUnavailableError directly."
+            )
+        super().__init__(self.provider, message or self.default_message, cause)
 
 
 class UpstreamTimeoutError(AppError):

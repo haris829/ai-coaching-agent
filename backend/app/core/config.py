@@ -16,7 +16,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -254,6 +254,56 @@ class Settings(BaseSettings):
     @property
     def is_test(self) -> bool:
         return self.environment.lower() == "test"
+
+    @property
+    def is_production(self) -> bool:
+        """Anything that is not explicitly a development or test environment.
+
+        Deliberately the *inverse* of a safe-list rather than a match on ``"production"``: a
+        deployment named ``staging``, ``uat`` or ``prod-eu`` must get the strict behaviour, and
+        the failure mode of guessing wrong should be an environment that is too strict rather than
+        one that is silently open.
+        """
+        return self.environment.lower() not in {"development", "dev", "test", "local"}
+
+    @model_validator(mode="after")
+    def _require_credentials_outside_development(self) -> Settings:
+        """Refuse to start a deployed environment with its guards switched off.
+
+        ``ADMIN_API_TOKEN`` and ``SYSTEM_API_TOKEN`` are both no-ops while unset — a deliberate
+        local-development convenience, and an unsafe production default. Documenting that as a
+        deployment requirement is not enough: the whole point of a requirement nobody enforces is
+        that it is eventually not met, and the symptom here is silent. Nothing errors; the guards
+        simply admit everybody.
+
+        What that costs is concrete. With ``ADMIN_API_TOKEN`` unset, the question bank's reads are
+        open, and those carry ``isCorrect``, ``correctPosition`` and ``isPrimary`` — the answer
+        key. With ``SYSTEM_API_TOKEN`` unset, UC-09's system endpoints accept an administrator,
+        and a caller who can report a disconnect can auto-submit a formal assessment.
+
+        So a deployed environment refuses to start without them, loudly, at import. Development and
+        test are exempt, which is what keeps the local workflow and this repository's suites
+        working unchanged.
+        """
+        if not self.is_production:
+            return self
+
+        missing = [
+            name
+            for name, value in (
+                ("ADMIN_API_TOKEN", self.admin_api_token),
+                ("SYSTEM_API_TOKEN", self.system_api_token),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                f"{', '.join(missing)} must be set when ENVIRONMENT={self.environment!r}. "
+                "These guards are no-ops while unset: the question bank's answer keys and "
+                "UC-09's system endpoints would be open. Set them, or run with "
+                "ENVIRONMENT=development."
+            )
+        return self
 
 
 @lru_cache(maxsize=1)

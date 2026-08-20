@@ -18,8 +18,8 @@ from app.core.errors import (
     BadRequestError,
     ConflictError,
     ForbiddenError,
+    NamedProviderUnavailableError,
     NotFoundError,
-    ProviderUnavailableError,
     ValidationError,
 )
 
@@ -214,7 +214,7 @@ class InvalidConfigurationError(ValidationError):
         super().__init__(message, code="INVALID_CONFIGURATION", context=context or None)
 
 
-class AttemptDeliveryUnavailableError(ProviderUnavailableError):
+class AttemptDeliveryUnavailableError(NamedProviderUnavailableError):
     """UC-03 could not be read.
 
     Added at integration, when UC-03 stopped being a fake and became a module that can genuinely
@@ -224,24 +224,14 @@ class AttemptDeliveryUnavailableError(ProviderUnavailableError):
     """
 
     code = "ATTEMPT_DELIVERY_UNAVAILABLE"
-
-    def __init__(
-        self,
-        message: str = "Attempt delivery is currently unavailable.",
-        cause: BaseException | None = None,
-    ) -> None:
-        super().__init__("uc03", message, cause)
+    provider = "uc03"
+    default_message = "Attempt delivery is currently unavailable."
 
 
-class QuestionBankUnavailableError(ProviderUnavailableError):
+class QuestionBankUnavailableError(NamedProviderUnavailableError):
     code = "QUESTION_BANK_UNAVAILABLE"
-
-    def __init__(
-        self,
-        message: str = "The question bank is currently unavailable.",
-        cause: BaseException | None = None,
-    ) -> None:
-        super().__init__("uc02", message, cause)
+    provider = "uc02"
+    default_message = "The question bank is currently unavailable."
 
 
 class InsufficientQuestionsError(ValidationError):
