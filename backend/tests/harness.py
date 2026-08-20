@@ -31,6 +31,12 @@ from tests import bank
 ADMIN_TOKEN = "test-admin-token"
 LEARNER_TOKEN = "test-learner-token"
 LEARNER2_TOKEN = "test-learner2-token"
+#: UC-09's third audience. A distinct role, not a flavour of admin: an assessor signs off on one
+#: learner's result and is named on the review record, while an administrator configures quizzes.
+ASSESSOR_TOKEN = "test-assessor-token"
+#: The service credential UC-09's system endpoints require — the session monitor, the certificate
+#: service, the recovery sweep. Deliberately not reachable from a browser.
+SYSTEM_TOKEN = "test-system-token"
 
 
 def auth(token: str) -> dict[str, str]:
@@ -45,6 +51,7 @@ class Ctx:
     admin_id: int
     learner_id: int
     learner2_id: int
+    assessor_id: int
     course_id: int
     quiz_id: int
     questions: dict[QuestionType, list[str]] = field(default_factory=dict)
@@ -225,8 +232,14 @@ def build_ctx(
             role=Role.LEARNER.value,
             api_token=LEARNER2_TOKEN,
         )
+        assessor = User(
+            email="assessor@test.local",
+            display_name="Test Assessor",
+            role=Role.ASSESSOR.value,
+            api_token=ASSESSOR_TOKEN,
+        )
         course = Course(code="TEST-1", title="Test Course")
-        session.add_all([admin, learner, learner2, course])
+        session.add_all([admin, learner, learner2, assessor, course])
         session.flush()
 
         quiz = Quiz(course_id=course.id, slug="test-quiz", title="Test Quiz")
@@ -249,6 +262,7 @@ def build_ctx(
             "admin_id": admin.id,
             "learner_id": learner.id,
             "learner2_id": learner2.id,
+            "assessor_id": assessor.id,
             "course_id": course.id,
             "quiz_id": quiz.id,
         }

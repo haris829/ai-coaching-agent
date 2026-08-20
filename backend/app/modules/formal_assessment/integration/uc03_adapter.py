@@ -22,6 +22,7 @@ return-value mapping of that existing guarantee, not new behaviour.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import select
@@ -32,13 +33,16 @@ from app.core.async_db import offload
 from app.core.errors import AppError
 from app.core.time import iso_or_none
 from app.modules.attempt_delivery.container import AppContext
+from app.modules.attempt_delivery.domain.enums import AnswerSource
 from app.modules.attempt_delivery.models import AttemptAnswer, AttemptQuestion, QuizAttempt
+from app.modules.attempt_delivery.services.answer_service import SaveAnswerInput
 from app.modules.formal_assessment.domain.enums import FormalSubmissionReason
 from app.modules.formal_assessment.domain.errors import (
     AttemptDeliveryUnavailableError,
     FormalAttemptCreationFailedError,
 )
 from app.modules.formal_assessment.integration.uc03 import (
+    AnswerSubmission,
     AttemptContext,
     AutosavedState,
     CreateAttemptRequest,
@@ -97,7 +101,9 @@ class FormalAttemptDeliveryAdapter:
     async def create_attempt(self, request: CreateAttemptRequest) -> AttemptContext:
         return await offload(self._create_attempt, request)
 
-    async def save_answers(self, attempt_id: str, answers: Any) -> AutosavedState:
+    async def save_answers(
+        self, attempt_id: str, answers: Sequence[AnswerSubmission]
+    ) -> AutosavedState:
         return await offload(self._save_answers, attempt_id, answers)
 
     async def submit_attempt(self, request: SubmissionRequest) -> SubmittedState:
@@ -244,20 +250,35 @@ class FormalAttemptDeliveryAdapter:
         attempt = result.attempt
         return _to_context(attempt, answered=0)
 
-    def _save_answers(self, attempt_id: str, answers: Any) -> AutosavedState:
+    def _save_answers(
+        self, attempt_id: str, answers: Sequence[AnswerSubmission]
+    ) -> AutosavedState:
         """Autosave through UC-03's own answer service.
 
         UC-09 does not validate an answer, hash it, version it or decide whether it is complete.
         All of that is UC-03's, and a supervised sitting gets exactly the same treatment as an
-        ordinary one.
+        ordinary one — which is why the payload is translated here, at the boundary, and read
+        nowhere in UC-09.
+
+        The source is recorded as ``AUTOSAVE`` because that is what it is: a formal attempt has no
+        manual save button, so every answer arrives on the autosave cadence.
         """
         attempt = self._row(attempt_id)
         if attempt is None:
             raise AttemptDeliveryUnavailableError()
 
+        entries = [
+            SaveAnswerInput(
+                question_id=item.question_id,
+                response=item.response,
+                source=AnswerSource.AUTOSAVE,
+            )
+            for item in answers
+        ]
+
         services = self._context.build(self._session)
         try:
-            services.answers.save_many(attempt_id, attempt.learner_id, answers)
+            services.answers.save_many(attempt_id, attempt.learner_id, entries)
         except AppError:
             # A rejected answer is UC-03's decision and reaches the learner unchanged; UC-09 has
             # no opinion about whether an answer is well formed.

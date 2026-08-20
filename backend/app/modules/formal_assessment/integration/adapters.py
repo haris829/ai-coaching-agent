@@ -274,10 +274,10 @@ class FormalCertificateWorkflowAdapter:
 
     def _trigger(self, request: CertificateTrigger) -> CertificateAcknowledgement:
         try:
-            issued = self._certificates.issue_for_attempt(
+            view = self._certificates.issue_after_formal_approval(
                 request.attempt_id,
-                idempotency_key=request.idempotency_key,
                 approved_by=request.approved_by,
+                idempotency_key=request.idempotency_key,
             )
         except Exception as exc:  # noqa: BLE001 - translated to one retryable failure below
             # A certificate that could not be requested must leave the approval standing and the
@@ -289,11 +289,17 @@ class FormalCertificateWorkflowAdapter:
             )
             raise CertificateWorkflowFailedError(request.attempt_id) from exc
 
+        certificate = view.certificate
         return CertificateAcknowledgement(
             accepted=True,
-            reference=getattr(issued, "certificate_reference", None) or getattr(issued, "id", None),
-            status=getattr(issued, "status", None),
-            already_requested=bool(getattr(issued, "already_requested", False)),
+            reference=getattr(certificate, "certificate_number", None),
+            status=getattr(certificate, "status", None),
+            # UC-05 issues at most one certificate per learner per quiz, and says so by returning
+            # the one already held. Reported rather than treated as a failure: a learner who
+            # passes a formal assessment twice keeps the certificate they have.
+            already_requested=bool(
+                certificate is not None and getattr(certificate, "status", None) == "ISSUED"
+            ),
         )
 
 

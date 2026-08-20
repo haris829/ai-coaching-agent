@@ -53,10 +53,16 @@ from tests import harness  # noqa: E402  (imports app modules, so it must come a
 
 #: Child-before-parent order, so truncation never trips a foreign key.
 _TRUNCATION_ORDER = [
-    # UC-08 — retakes. Cleared first, for the reason the list is ordered newest-first: its rows
-    # softly reference UC-03's attempts and UC-01's configuration versions. A capability whose
-    # tables are missing from this list leaks state between tests, and the symptom is a *later*
-    # test failing on a uniqueness constraint it never triggered itself.
+    # Newest capability first, which is also child-before-parent. A capability whose tables are
+    # missing from this list leaks state between tests, and the symptom is a *later* test failing
+    # on a uniqueness constraint it never triggered itself.
+    #
+    # UC-09 — formal assessment. Its three tables are bound to each other by real foreign keys, so
+    # the order within the group matters; everything else it references is soft.
+    "qs_formal_reviews",
+    "qs_formal_device_sessions",
+    "qs_formal_attempts",
+    # UC-08 — retakes. Softly reference UC-03's attempts and UC-01's configuration versions.
     "qt_retake_requests",
     "qt_additional_attempt_grants",
     # UC-07 — coaching. Its sessions reference UC-03's attempts and UC-02's questions (softly).

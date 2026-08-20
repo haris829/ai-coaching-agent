@@ -73,6 +73,11 @@ from app.modules.coaching.integration.uc04 import AttemptScore, ScoringResultPro
 from app.modules.coaching.integration.uc04_adapter import ScoringCoachingAdapter
 from app.modules.coaching.integration.uc06 import AttemptFeedback, FeedbackProvider
 from app.modules.coaching.integration.uc06_adapter import FeedbackCoachingAdapter
+from app.modules.coaching.integration.uc09 import (
+    FormalAssessmentPolicyPort,
+    UnrestrictedFormalAssessmentPolicy,
+)
+from app.modules.coaching.integration.uc09_adapter import FormalAssessmentCoachingAdapter
 from app.modules.coaching.repositories.in_memory import (
     InMemoryCoachingSessionRepository,
     InMemoryCoachingTranscriptRepository,
@@ -137,6 +142,8 @@ class Ports:
     llm: CoachingLLM
     activity: CoachingActivityLog
     knowledge_gaps: KnowledgeGapTracker
+    #: UC-09. Whether a formal assessment of this learner's is in progress (§7).
+    formal_assessment: FormalAssessmentPolicyPort
 
 
 @dataclass
@@ -175,6 +182,7 @@ def create_container(
     llm: CoachingLLM | None = None,
     activity: CoachingActivityLog | None = None,
     knowledge_gaps: KnowledgeGapTracker | None = None,
+    formal_assessment: FormalAssessmentPolicyPort | None = None,
     sessions_repository: CoachingSessionRepository | None = None,
     transcripts_repository: CoachingTranscriptRepository | None = None,
     sanitizer: CoachingContextSanitizer | None = None,
@@ -192,6 +200,10 @@ def create_container(
         llm=llm or UnconfiguredCoachingLLM(),
         activity=activity or LoggingCoachingActivityLog(),
         knowledge_gaps=knowledge_gaps or LoggingKnowledgeGapTracker(),
+        # Allowing is the honest default here, unlike every other port in this container: without
+        # UC-09 there are no formal assessments, so there is nothing to be in the middle of. See
+        # ``integration/uc09.py`` — an *unreadable* UC-09 is a different case and raises.
+        formal_assessment=formal_assessment or UnrestrictedFormalAssessmentPolicy(),
     )
 
     repositories = Repositories(
@@ -208,6 +220,7 @@ def create_container(
         scores=ports.scores,
         feedback=ports.feedback,
         llm=ports.llm,
+        formal_assessment=ports.formal_assessment,
     )
     context_builder = CoachingContextBuilder(
         attempts=ports.attempts, sanitizer=the_sanitizer
@@ -271,6 +284,9 @@ class CoachingPorts:
     transcripts: Callable[[Session], CoachingTranscriptRepository]
     activity: Callable[[Session], CoachingActivityLog]
     knowledge_gaps: Callable[[Session], KnowledgeGapTracker]
+    #: UC-09. Whether a formal assessment of this learner's is in progress — asked on every
+    #: coaching operation. Learner-scoped, not attempt-scoped; see ``integration/uc09.py``.
+    formal_assessment: Callable[[Session], FormalAssessmentPolicyPort]
 
     @classmethod
     def merged(cls) -> CoachingPorts:
@@ -288,6 +304,7 @@ class CoachingPorts:
             transcripts=SqlAlchemyCoachingTranscriptRepository,
             activity=SqlAlchemyCoachingActivityLog,
             knowledge_gaps=SqlAlchemyKnowledgeGapTracker,
+            formal_assessment=FormalAssessmentCoachingAdapter,
         )
 
 
@@ -344,6 +361,7 @@ class CoachingAppContext:
             transcripts_repository=self.ports.transcripts(session),
             activity=self.ports.activity(session),
             knowledge_gaps=self.ports.knowledge_gaps(session),
+            formal_assessment=self.ports.formal_assessment(session),
         )
 
     @contextmanager

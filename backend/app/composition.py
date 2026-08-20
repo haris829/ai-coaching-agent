@@ -56,6 +56,13 @@ from app.modules.certification.integration.certificate.local_adapter import (
 from app.modules.certification.integration.certificate.port import CertificateServicePort
 from app.modules.certification.integration.cpd.local_adapter import LocalCpdSyncService
 from app.modules.certification.integration.cpd.port import CpdSyncPort
+from app.modules.certification.integration.formal_gate import (
+    CertificateGatePort,
+    UnrestrictedCertificateGate,
+)
+from app.modules.certification.integration.formal_gate_adapter import (
+    FormalCertificateGateAdapter,
+)
 from app.modules.certification.integration.scoring.port import ScoreResultPort
 from app.modules.certification.integration.scoring.result_adapter import ScoringResultAdapter
 from app.modules.certification.repositories import SqlAlchemyCertificationRepository
@@ -107,6 +114,16 @@ class ResultsPorts:
     score_details: Callable[[Session], ScoreDetailPort]
     outcomes: Callable[[Session], OutcomePort]
     content: Callable[[Session], QuestionContentPort]
+    #: UC-05 -> UC-09. The condition that withholds a certificate for a formal assessment nobody
+    #: has approved yet.
+    #:
+    #: Last, and defaulted, so every caller that built these ports before UC-09 existed still
+    #: does — and so a test that wants the results chain without a formal gate gets the honest
+    #: answer rather than having to construct one. ``UnrestrictedCertificateGate`` reports "not a
+    #: formal assessment", which is the truth wherever UC-09 is not bound.
+    formal_gate: Callable[[Session], CertificateGatePort] = (
+        lambda _session: UnrestrictedCertificateGate()
+    )
 
     @classmethod
     def merged(
@@ -126,6 +143,7 @@ class ResultsPorts:
             policies=AttemptPolicyAdapter,
             certificates=certificates or LocalCertificateService(),
             cpd=cpd or LocalCpdSyncService(),
+            formal_gate=FormalCertificateGateAdapter,
             score_details=ScoringDetailAdapter,
             outcomes=CertificationOutcomeAdapter,
             content=QuestionContentAdapter,
@@ -192,6 +210,7 @@ class ResultsAppContext:
             certificates=self.ports.certificates,
             cpd=self.ports.cpd,
             clock=self.clock,
+            formal_gate=self.ports.formal_gate(session),
         )
         feedback = FeedbackService(
             session=session,
