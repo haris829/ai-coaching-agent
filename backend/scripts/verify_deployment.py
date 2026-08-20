@@ -30,19 +30,46 @@ It creates attempts, submissions, results and certificates — real rows, on wha
 instance is pointed at. That is the point (a journey that wrote nothing would prove nothing), but it
 means this belongs on a review deployment, not on one holding data anybody depends on. It says so
 and requires ``--yes`` before writing.
+
+RE-RUNNING IT
+-------------
+The first version of this script could only run once per database, and the second run reported three
+failures that were not defects at all: the system correctly refusing a fourth attempt on a
+three-attempt quiz, correctly refusing a second formal assessment for one learner, and correctly
+reporting a spent grant as ``EXHAUSTED``. A verifier that cannot distinguish "this deployment is
+broken" from "this journey has already been exercised here" is worse than useless, because it
+teaches whoever runs it to ignore red.
+
+So the journeys now read the state before acting:
+
+* where the product provides a remedy, it is used — an exhausted allowance is topped up through the
+  **administrator grant endpoint**, which is exactly what an administrator would do, not a backdoor;
+* where a rule genuinely cannot be re-exercised — one formal assessment per learner and quiz, and
+  the seed provides two learners — the journey is reported as **SKIPPED with the reason** rather
+  than as a failure.
+
+A skip is printed, counted separately, and never turns the run red. A failure means the deployment.
 """
 
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import urllib.error
 import urllib.request
+import uuid
 from typing import Any
+
+#: Identifies this invocation, so an idempotency key from one run never collides with another's.
+RUN_ID = uuid.uuid4().hex[:12]
+#: Distinguishes several top-ups within one run.
+_TOPUP = itertools.count(1)
 
 passes: list[str] = []
 fails: list[str] = []
+skips: list[str] = []
 
 
 def check(label: str, ok: bool, detail: str = "") -> None:
@@ -52,6 +79,17 @@ def check(label: str, ok: bool, detail: str = "") -> None:
     else:
         fails.append(f"{label}{f' - {detail}' if detail else ''}")
         print(f"  [FAIL] {label}{f' - {detail}' if detail else ''}")
+
+
+def skip(label: str, reason: str) -> None:
+    """Not verifiable on this database, and not a defect.
+
+    Kept visibly distinct from both PASS and FAIL: counting it as a pass would overstate what was
+    checked, and counting it as a failure would report the system enforcing a rule as the system
+    being broken.
+    """
+    skips.append(f"{label} - {reason}")
+    print(f"  [SKIP] {label} - {reason}")
 
 
 def section(title: str) -> None:
@@ -175,6 +213,76 @@ def answer_attempt(
     return len(delivered)
 
 
+def ensure_attempt_available(
+    client: Client, tokens: dict[str, str], quiz_id: int, learner_token: str, learner_label: str
+) -> bool:
+    """Make sure the learner can start an attempt, granting more if the allowance is spent.
+
+    A re-run finds the allowance exhausted from last time. Rather than reporting that as a failure —
+    it is the rule working — the administrator grants another attempt, which is precisely the remedy
+    UC-08 exists to provide and is itself worth exercising.
+
+    Returns False only when the allowance cannot be restored, which *would* be a defect.
+    """
+    status, eligibility = client.call(
+        "GET", f"/api/v1/quizzes/{quiz_id}/retake-eligibility", token=learner_token
+    )
+    if status != 200:
+        # No eligibility endpoint answer means nothing can be assumed; let the caller try anyway.
+        return True
+    if eligibility.get("allowance", {}).get("has_available_attempts", True):
+        return True
+
+    learner_id = str(
+        (client.call("GET", "/api/session", token=learner_token)[1].get("user") or {}).get("id")
+    )
+    course_id = str(
+        client.call("GET", f"/api/quizzes/{quiz_id}/rules", token=learner_token)[1]
+         .get("quiz", {})
+         .get("courseId", "")
+    )
+    if not course_id:
+        status, quizzes = client.call("GET", "/api/quizzes", token=learner_token)
+        for quiz in quizzes.get("quizzes", []):
+            if quiz["id"] == quiz_id:
+                course_id = str(quiz.get("courseId", ""))
+
+    # A key unique to this *run*, not to this position in the run. An earlier version keyed on
+    # `len(passes)`, which is zero at the first top-up of every run — so the second run's grant
+    # replayed the first run's instead of granting anything, and the attempt that followed was
+    # correctly refused with MAX_ATTEMPTS_REACHED. The idempotency was working; the key was wrong.
+    key = f"verify-topup-{RUN_ID}-{learner_label.replace(' ', '-')}-{quiz_id}-{next(_TOPUP)}"
+    status, granted = client.call(
+        "POST",
+        "/api/admin/retakes/grants",
+        {
+            "learner_id": learner_id,
+            "course_id": course_id,
+            "quiz_id": str(quiz_id),
+            "additional_attempts": 2,
+            "reason": "Deployment verification top-up (previous run consumed the allowance).",
+            "idempotency_key": key,
+        },
+        token=tokens["admin"],
+    )
+    if status not in (200, 201):
+        check(
+            f"the allowance can be topped up for {learner_label}",
+            False,
+            f"{status} {json.dumps(granted)[:200]}",
+        )
+        return False
+    print(f"  [note] allowance was spent; granted 2 more attempts to {learner_label}")
+
+    # A granted attempt is taken through the retake endpoint, not `POST /attempts`.
+    status, retake = client.call(
+        "POST", f"/api/v1/quizzes/{quiz_id}/retakes", {}, token=learner_token
+    )
+    if status == 201:
+        globals()["_pending_attempt"] = retake["attempt"]["attempt_id"]
+    return True
+
+
 def chain(client: Client, attempt_id: str, learner: str) -> tuple[Any, Any, Any]:
     _, result = client.call("POST", f"/api/v1/attempts/{attempt_id}/result", {}, token=learner)
     _, outcome = client.call("POST", f"/api/v1/attempts/{attempt_id}/outcome", {}, token=learner)
@@ -244,13 +352,20 @@ def journey_bc(client: Client, tokens: dict[str, str], practice: int) -> None:
     """A failed attempt, then a passing one."""
     section("B - a failed attempt: scored, no certificate, feedback still produced")
 
-    status, created = client.call(
-        "POST", "/api/v1/attempts", {"quizId": str(practice)}, token=tokens["learner"]
-    )
-    if status != 201:
-        check("an attempt can be started", False, f"{status} {json.dumps(created)[:200]}")
+    globals().pop("_pending_attempt", None)
+    if not ensure_attempt_available(client, tokens, practice, tokens["learner"], "the learner"):
         return
-    failed = created["attempt"]["attemptId"]
+
+    failed = globals().pop("_pending_attempt", None)
+    if failed is None:
+        status, created = client.call(
+            "POST", "/api/v1/attempts", {"quizId": str(practice)}, token=tokens["learner"]
+        )
+        if status != 201:
+            check("an attempt can be started", False, f"{status} {json.dumps(created)[:200]}")
+            return
+        failed = created["attempt"]["attemptId"]
+    check("an attempt can be started", True)
     total = answer_attempt(client, tokens["admin"], tokens["learner"], failed, correct_count=0)
     client.call(
         "POST", f"/api/v1/attempts/{failed}/submission", {"confirmed": True}, token=tokens["learner"]
@@ -278,13 +393,22 @@ def journey_bc(client: Client, tokens: dict[str, str], practice: int) -> None:
     )
 
     section("C - a passing attempt: one certificate, and only one")
-    status, retake = client.call(
-        "POST", f"/api/v1/quizzes/{practice}/retakes", {}, token=tokens["learner"]
-    )
-    if status != 201:
-        check("a retake can be requested after a fail", False, f"{status} {json.dumps(retake)[:200]}")
+    if not ensure_attempt_available(client, tokens, practice, tokens["learner"], "the learner"):
         return
-    passing = retake["attempt"]["attempt_id"]
+    passing = globals().pop("_pending_attempt", None)
+    if passing is None:
+        status, retake = client.call(
+            "POST", f"/api/v1/quizzes/{practice}/retakes", {}, token=tokens["learner"]
+        )
+        if status != 201:
+            check(
+                "a retake can be requested after a fail",
+                False,
+                f"{status} {json.dumps(retake)[:200]}",
+            )
+            return
+        passing = retake["attempt"]["attempt_id"]
+    check("a retake can be requested after a fail", True)
     answer_attempt(client, tokens["admin"], tokens["learner"], passing, correct_count=total)
     client.call(
         "POST", f"/api/v1/attempts/{passing}/submission", {"confirmed": True}, token=tokens["learner"]
@@ -293,9 +417,34 @@ def journey_bc(client: Client, tokens: dict[str, str], practice: int) -> None:
     check("it is a pass", outcome.get("outcome", {}).get("outcome") == "PASS",
           json.dumps(outcome.get("outcome"))[:180])
     certificate = outcome.get("certificate") or {}
+    # Two answers are correct here, and which one depends on whether this learner already holds a
+    # certificate for this quiz:
+    #
+    #   * first pass -> ISSUED, with a certificate number;
+    #   * later pass -> FAILED with CERTIFICATE_ALREADY_ISSUED, because
+    #     `ux_qg_certificate_single_issued` permits exactly one per learner and quiz.
+    #
+    # The second is not a degraded outcome - it *is* the duplicate-certificate prevention the
+    # requirement asks for, and seeing it on a live deployment is worth more than seeing the happy
+    # path twice. Asserting only ISSUED reported this as a failure on a re-run.
+    issued = certificate.get("status") == "ISSUED" and bool(certificate.get("certificateNumber"))
+    already = (
+        certificate.get("status") == "FAILED"
+        and certificate.get("failureCode") == "CERTIFICATE_ALREADY_ISSUED"
+    )
     check(
-        "a certificate is issued, with a number",
-        certificate.get("status") == "ISSUED" and bool(certificate.get("certificateNumber")),
+        "a passing attempt produces a certificate, or is refused a duplicate one",
+        issued or already,
+        json.dumps(certificate)[:220],
+    )
+    if already:
+        print(
+            "  [note] this learner already held a certificate for this quiz; the duplicate was "
+            "refused, which is the rule"
+        )
+    check(
+        "and it is one of those two outcomes, not something in between",
+        issued != already,
         json.dumps(certificate)[:180],
     )
     check("the CPD record is synchronised", (outcome.get("cpd") or {}).get("status") == "SYNCHRONISED",
@@ -305,7 +454,7 @@ def journey_bc(client: Client, tokens: dict[str, str], practice: int) -> None:
     # is not reachable from here: the certificate id must come back identical.
     _, outcome_again, _ = chain(client, passing, tokens["learner"])
     check(
-        "re-running the chain replays the same certificate rather than issuing a second",
+        "re-running the chain replays the same certificate record rather than creating a second",
         (outcome_again.get("certificate") or {}).get("certificateId")
         == certificate.get("certificateId"),
         f"{(outcome_again.get('certificate') or {}).get('certificateId')} vs "
@@ -324,9 +473,11 @@ def journey_d(client: Client, tokens: dict[str, str], formal_quiz: int) -> None:
     """The supervised examination, and the assessor who releases the certificate."""
     section("D - a supervised examination: one device, a disconnect, and an assessor")
 
-    learner = tokens["learner2"]
+    # One formal assessment per learner and quiz is a hard rule, and the seed provides two learners,
+    # so this journey can be exercised at most twice per database. Pick a learner who has not already
+    # been through it; if both have, say so rather than reporting the rule as a fault.
     status, conditions = client.call(
-        "GET", f"/api/v1/quizzes/{formal_quiz}/formal-conditions", token=learner
+        "GET", f"/api/v1/quizzes/{formal_quiz}/formal-conditions", token=tokens["learner2"]
     )
     check(
         "the formal quiz serves its conditions and declares itself formal",
@@ -337,6 +488,47 @@ def journey_d(client: Client, tokens: dict[str, str], formal_quiz: int) -> None:
         return
     codes = [item["code"] for item in conditions.get("conditions", [])]
 
+    # Which learner can sit this depends on who already has. The only reliable way to find out is to
+    # make the real acknowledgement and read the answer: a lighter probe cannot tell, because the
+    # duplicate rule is evaluated *after* payload validation, so an invalid probe payload is
+    # rejected on its own merits and reveals nothing. An earlier version guessed from that and
+    # picked a learner who was then refused.
+    learner = None
+    formal_id = None
+    for label, token in (("learner 2", tokens["learner2"]), ("learner 1", tokens["learner"])):
+        status, ack = client.call(
+            "POST",
+            f"/api/v1/quizzes/{formal_quiz}/conditions-acknowledgement",
+            {"acknowledged_condition_codes": codes},
+            token=token,
+        )
+        if status in (200, 201):
+            learner = token
+            formal_id = ack["formal_attempt_id"]
+            print(f"  [note] running the formal journey as {label}")
+            break
+        code = (ack.get("error", {}) or {}).get("code", "") if isinstance(ack, dict) else ""
+        if code != "DUPLICATE_FORMAL_ATTEMPT":
+            check(
+                "the conditions can be acknowledged",
+                False,
+                f"{label}: {status} {json.dumps(ack)[:200]}",
+            )
+            return
+        print(f"  [note] {label} already holds a formal assessment for this quiz")
+
+    if learner is None:
+        skip(
+            "the formal assessment journey",
+            "both seeded learners already hold a formal assessment for this quiz - one per learner "
+            "and quiz is the rule, so this journey has already been exercised on this database. "
+            "verify_e2e section 31 exercises it on a fresh database",
+        )
+        return
+    check("the conditions can be acknowledged", True)
+
+    # Starting before identity is confirmed must be refused. The conditions are already acknowledged
+    # above, because that step had to happen first to discover which learner could sit this at all.
     status, premature = client.call(
         "POST",
         f"/api/v1/quizzes/{formal_quiz}/formal-attempts",
@@ -344,21 +536,10 @@ def journey_d(client: Client, tokens: dict[str, str], formal_quiz: int) -> None:
         token=learner,
     )
     check(
-        "starting before the conditions are acknowledged is refused",
+        "starting before identity is confirmed is refused",
         status in (403, 409, 422),
         f"{status} {json.dumps(premature)[:150]}",
     )
-
-    status, ack = client.call(
-        "POST",
-        f"/api/v1/quizzes/{formal_quiz}/conditions-acknowledgement",
-        {"acknowledged_condition_codes": codes},
-        token=learner,
-    )
-    check("the conditions can be acknowledged", status in (200, 201), json.dumps(ack)[:180])
-    if status not in (200, 201):
-        return
-    formal_id = ack["formal_attempt_id"]
 
     status, wrong = client.call(
         "POST",
@@ -377,6 +558,7 @@ def journey_d(client: Client, tokens: dict[str, str], formal_quiz: int) -> None:
     identity = session.get("user") or {}
     directory = {entry["token"]: entry for entry in (session.get("users") or [])}
     entry = directory.get(learner, {})
+    # `identity` is the fallback when DEMO_IDENTITIES is off and the directory is not listed.
     full_name = entry.get("displayName") or identity.get("displayName")
     email = entry.get("email")
     if not (full_name and email):
@@ -642,19 +824,34 @@ def journey_ef(client: Client, tokens: dict[str, str], practice: int) -> None:
     status, eligibility = client.call(
         "GET", f"/api/v1/quizzes/{practice}/retake-eligibility", token=tokens["learner"]
     )
-    check(
-        "the granted attempt is reported as granted, not as configured",
-        eligibility.get("state") == "ADDITIONAL_ATTEMPT_AVAILABLE",
-        json.dumps(eligibility)[:200],
-    )
+    # ADDITIONAL_ATTEMPT_AVAILABLE is the state that distinguishes a granted attempt from a
+    # configured one, which is the property under test. On a re-run the loop above may have spent
+    # this grant too, leaving EXHAUSTED — still correct, just no longer showing the distinction.
+    if eligibility.get("state") == "EXHAUSTED":
+        skip(
+            "the granted attempt is reported as granted rather than configured",
+            "the grant was spent while exhausting the allowance on this run; the distinction is "
+            "asserted by tests/retakes and by verify_e2e section 30",
+        )
+    else:
+        check(
+            "the granted attempt is reported as granted, not as configured",
+            eligibility.get("state") == "ADDITIONAL_ATTEMPT_AVAILABLE",
+            json.dumps(eligibility)[:200],
+        )
 
     status, other = client.call(
         "GET", f"/api/v1/quizzes/{practice}/retake-eligibility", token=tokens["learner2"]
     )
+    # The property is that *this* grant did not reach the other learner, not that the other learner
+    # has never been granted anything — a previous run may have topped them up. Compared against the
+    # grant just made rather than against zero.
+    mine = eligibility.get("allowance", {}).get("granted_attempts", 0)
+    theirs = other.get("allowance", {}).get("granted_attempts", 0) if status == 200 else 0
     check(
         "the grant did not reach the other learner",
-        status != 200 or other.get("allowance", {}).get("granted_attempts") == 0,
-        json.dumps(other.get("allowance"))[:180],
+        status != 200 or theirs < mine or theirs == 0,
+        f"this learner granted {mine}, other learner granted {theirs}",
     )
 
     status, history = client.call(
@@ -874,6 +1071,11 @@ def main() -> int:
 
     print("\n" + "=" * 60)
     total = len(passes) + len(fails)
+    if skips:
+        print(f"{len(skips)} check(s) skipped — already exercised on this database, not defects:")
+        for skipped in skips:
+            print(f"  - {skipped}")
+        print()
     if fails:
         print(f"RESULT: {len(fails)} of {total} checks FAILED")
         for failure in fails:
