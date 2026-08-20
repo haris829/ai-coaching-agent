@@ -213,74 +213,104 @@ def answer_attempt(
     return len(delivered)
 
 
-def ensure_attempt_available(
+def obtain_attempt(
     client: Client, tokens: dict[str, str], quiz_id: int, learner_token: str, learner_label: str
-) -> bool:
-    """Make sure the learner can start an attempt, granting more if the allowance is spent.
+) -> str | None:
+    """Get an attempt this learner may actually sit, whichever route that requires.
 
-    A re-run finds the allowance exhausted from last time. Rather than reporting that as a failure —
-    it is the rule working — the administrator grants another attempt, which is precisely the remedy
-    UC-08 exists to provide and is itself worth exercising.
+    Two things make this more than `POST /attempts`:
 
-    Returns False only when the allowance cannot be restored, which *would* be a defect.
+    * **A first attempt and a retake are different endpoints.** `POST /attempts` creates the first;
+      every one after it goes through `POST /quizzes/{id}/retakes`, which is UC-08's to decide.
+    * **UC-03 does not count administrator grants.** A learner whose configured allowance is spent
+      but who has been *granted* another attempt is refused by `POST /attempts` with
+      MAX_ATTEMPTS_REACHED — correctly, because the grant is UC-08's record, not UC-01's
+      configuration. Only the retake endpoint knows about it.
+
+    An earlier version checked "are attempts available?" and then called `POST /attempts` anyway,
+    which passed on a fresh deployment and failed on one where the allowance had been topped up —
+    reporting the two capabilities disagreeing as a deployment fault when they were each right.
+
+    Returns the attempt id, or ``None`` when one genuinely cannot be obtained, which *would* be a
+    defect.
     """
     status, eligibility = client.call(
         "GET", f"/api/v1/quizzes/{quiz_id}/retake-eligibility", token=learner_token
     )
-    if status != 200:
-        # No eligibility endpoint answer means nothing can be assumed; let the caller try anyway.
-        return True
-    if eligibility.get("allowance", {}).get("has_available_attempts", True):
-        return True
+    allowance = eligibility.get("allowance", {}) if status == 200 else {}
 
-    learner_id = str(
-        (client.call("GET", "/api/session", token=learner_token)[1].get("user") or {}).get("id")
-    )
-    course_id = str(
-        client.call("GET", f"/api/quizzes/{quiz_id}/rules", token=learner_token)[1]
-         .get("quiz", {})
-         .get("courseId", "")
-    )
-    if not course_id:
-        status, quizzes = client.call("GET", "/api/quizzes", token=learner_token)
-        for quiz in quizzes.get("quizzes", []):
-            if quiz["id"] == quiz_id:
-                course_id = str(quiz.get("courseId", ""))
-
-    # A key unique to this *run*, not to this position in the run. An earlier version keyed on
-    # `len(passes)`, which is zero at the first top-up of every run — so the second run's grant
-    # replayed the first run's instead of granting anything, and the attempt that followed was
-    # correctly refused with MAX_ATTEMPTS_REACHED. The idempotency was working; the key was wrong.
-    key = f"verify-topup-{RUN_ID}-{learner_label.replace(' ', '-')}-{quiz_id}-{next(_TOPUP)}"
-    status, granted = client.call(
-        "POST",
-        "/api/admin/retakes/grants",
-        {
-            "learner_id": learner_id,
-            "course_id": course_id,
-            "quiz_id": str(quiz_id),
-            "additional_attempts": 2,
-            "reason": "Deployment verification top-up (previous run consumed the allowance).",
-            "idempotency_key": key,
-        },
-        token=tokens["admin"],
-    )
-    if status not in (200, 201):
-        check(
-            f"the allowance can be topped up for {learner_label}",
-            False,
-            f"{status} {json.dumps(granted)[:200]}",
+    if status == 200 and not allowance.get("has_available_attempts", True):
+        # Spent. The administrator grants more — the product's own remedy, and worth exercising.
+        learner_id = str(
+            (client.call("GET", "/api/session", token=learner_token)[1].get("user") or {}).get("id")
         )
-        return False
-    print(f"  [note] allowance was spent; granted 2 more attempts to {learner_label}")
+        course_id = str(
+            client.call("GET", f"/api/quizzes/{quiz_id}/rules", token=learner_token)[1]
+             .get("quiz", {})
+             .get("courseId", "")
+        )
+        if not course_id:
+            _, quizzes = client.call("GET", "/api/quizzes", token=learner_token)
+            for quiz in quizzes.get("quizzes", []):
+                if quiz["id"] == quiz_id:
+                    course_id = str(quiz.get("courseId", ""))
 
-    # A granted attempt is taken through the retake endpoint, not `POST /attempts`.
-    status, retake = client.call(
-        "POST", f"/api/v1/quizzes/{quiz_id}/retakes", {}, token=learner_token
+        # Unique per run, not per position in the run: an earlier key used `len(passes)`, which is
+        # zero at the first top-up of every run, so the second run's grant replayed the first run's
+        # and granted nothing.
+        key = f"verify-topup-{RUN_ID}-{learner_label.replace(' ', '-')}-{quiz_id}-{next(_TOPUP)}"
+        grant_status, granted = client.call(
+            "POST",
+            "/api/admin/retakes/grants",
+            {
+                "learner_id": learner_id,
+                "course_id": course_id,
+                "quiz_id": str(quiz_id),
+                "additional_attempts": 2,
+                "reason": "Deployment verification top-up (a previous run spent the allowance).",
+                "idempotency_key": key,
+            },
+            token=tokens["admin"],
+        )
+        if grant_status not in (200, 201):
+            check(
+                f"the allowance can be topped up for {learner_label}",
+                False,
+                f"{grant_status} {json.dumps(granted)[:200]}",
+            )
+            return None
+        print(f"  [note] allowance was spent; granted 2 more attempts to {learner_label}")
+        _, eligibility = client.call(
+            "GET", f"/api/v1/quizzes/{quiz_id}/retake-eligibility", token=learner_token
+        )
+        allowance = eligibility.get("allowance", {})
+
+    # A learner who has sat this quiz before takes their next attempt as a retake, whether the
+    # entitlement came from the configuration or from a grant.
+    if allowance.get("attempts_used", 0) > 0:
+        status, retake = client.call(
+            "POST", f"/api/v1/quizzes/{quiz_id}/retakes", {}, token=learner_token
+        )
+        if status == 201:
+            return retake["attempt"]["attempt_id"]
+        check(
+            f"a retake can be obtained for {learner_label}",
+            False,
+            f"{status} {json.dumps(retake)[:200]}",
+        )
+        return None
+
+    status, created = client.call(
+        "POST", "/api/v1/attempts", {"quizId": str(quiz_id)}, token=learner_token
     )
     if status == 201:
-        globals()["_pending_attempt"] = retake["attempt"]["attempt_id"]
-    return True
+        return created["attempt"]["attemptId"]
+    check(
+        f"a first attempt can be started for {learner_label}",
+        False,
+        f"{status} {json.dumps(created)[:200]}",
+    )
+    return None
 
 
 def chain(client: Client, attempt_id: str, learner: str) -> tuple[Any, Any, Any]:
@@ -352,19 +382,9 @@ def journey_bc(client: Client, tokens: dict[str, str], practice: int) -> None:
     """A failed attempt, then a passing one."""
     section("B - a failed attempt: scored, no certificate, feedback still produced")
 
-    globals().pop("_pending_attempt", None)
-    if not ensure_attempt_available(client, tokens, practice, tokens["learner"], "the learner"):
-        return
-
-    failed = globals().pop("_pending_attempt", None)
+    failed = obtain_attempt(client, tokens, practice, tokens["learner"], "the learner")
     if failed is None:
-        status, created = client.call(
-            "POST", "/api/v1/attempts", {"quizId": str(practice)}, token=tokens["learner"]
-        )
-        if status != 201:
-            check("an attempt can be started", False, f"{status} {json.dumps(created)[:200]}")
-            return
-        failed = created["attempt"]["attemptId"]
+        return
     check("an attempt can be started", True)
     total = answer_attempt(client, tokens["admin"], tokens["learner"], failed, correct_count=0)
     client.call(
@@ -393,21 +413,9 @@ def journey_bc(client: Client, tokens: dict[str, str], practice: int) -> None:
     )
 
     section("C - a passing attempt: one certificate, and only one")
-    if not ensure_attempt_available(client, tokens, practice, tokens["learner"], "the learner"):
-        return
-    passing = globals().pop("_pending_attempt", None)
+    passing = obtain_attempt(client, tokens, practice, tokens["learner"], "the learner")
     if passing is None:
-        status, retake = client.call(
-            "POST", f"/api/v1/quizzes/{practice}/retakes", {}, token=tokens["learner"]
-        )
-        if status != 201:
-            check(
-                "a retake can be requested after a fail",
-                False,
-                f"{status} {json.dumps(retake)[:200]}",
-            )
-            return
-        passing = retake["attempt"]["attempt_id"]
+        return
     check("a retake can be requested after a fail", True)
     answer_attempt(client, tokens["admin"], tokens["learner"], passing, correct_count=total)
     client.call(
