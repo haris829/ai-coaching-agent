@@ -104,7 +104,7 @@ class SqlAlchemyReviewRepository(ReviewRepository):
 
     async def get_flags(
         self,
-        question_ids: Sequence[str],
+        question_ids: Sequence[str] | None,
         context: QueryContext,
         *,
         statuses: Sequence[FlagStatus] | None = None,
@@ -147,13 +147,21 @@ class SqlAlchemyReviewRepository(ReviewRepository):
     # ---- synchronous bodies -------------------------------------------------
 
     def _get_flags(
-        self, question_ids: Sequence[str], statuses: Sequence[FlagStatus] | None
+        self, question_ids: Sequence[str] | None, statuses: Sequence[FlagStatus] | None
     ) -> Mapping[str, QuestionFlagRecord]:
-        if not question_ids:
+        """Flags keyed by question id.
+
+        ``question_ids=None`` means **every flagged question** — that is how the content-review
+        queue is populated without first enumerating the whole catalogue, and the protocol says so.
+        An empty *sequence* is the opposite: nothing was asked about, so nothing comes back. The
+        two look similar and mean opposite things, which is exactly why the distinction is written
+        out here rather than left to a falsy check.
+        """
+        if question_ids is not None and not question_ids:
             return {}
-        query = select(QuestionFlagRow).where(
-            QuestionFlagRow.question_id.in_(list(question_ids))
-        )
+        query = select(QuestionFlagRow)
+        if question_ids is not None:
+            query = query.where(QuestionFlagRow.question_id.in_(list(question_ids)))
         if statuses is not None:
             query = query.where(
                 QuestionFlagRow.status.in_([status.value for status in statuses])

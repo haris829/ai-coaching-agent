@@ -229,10 +229,21 @@ class QuestionMetadata(_ExternalRecord):
 
     @property
     def display_type(self) -> str:
-        """Type to show in reports: the provider's label when we normalised it."""
-        if self.question_type is ReportingQuestionType.OTHER and self.question_type_label:
-            return self.question_type_label
-        return self.question_type.value
+        """Type to show in reports: the provider's own name whenever it supplied one.
+
+        UC-10 originally used the provider's label only when normalisation had fallen back to
+        ``OTHER`` — sensible when the provider's vocabulary was unknown and its labels might be
+        anything. In the merged system the provider *is* this system, its five type names are the
+        authoritative ones, and the mapping in ``integration/question_types.py`` is deliberately
+        lossy: ``SINGLE_CHOICE`` normalises to ``MULTIPLE_CHOICE`` so analytics can group by a
+        generic shape.
+
+        Showing the normalised name would undo that on the way out — an administrator would read
+        "MULTIPLE_CHOICE" for a question the authoring screen calls "Single choice". So the label
+        wins whenever one is supplied, and the enum value is the fallback for a provider that
+        offers none.
+        """
+        return self.question_type_label or self.question_type.value
 
 
 class QuestionFlagRecord(_ExternalRecord):

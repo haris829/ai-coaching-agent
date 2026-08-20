@@ -67,6 +67,7 @@ from app.modules.analytics.integration.question_types import (
     map_question_type,
     question_type_label,
 )
+from app.modules.analytics.models import QuestionFlagRow
 from app.modules.analytics.repositories.base import AnalyticsRepository
 from app.modules.analytics.repositories.sqlalchemy_review import flag_from_row
 from app.modules.attempt_delivery.models import AttemptAnswer, QuizAttempt
@@ -158,24 +159,58 @@ def _derive_time_spent(
     return elapsed if elapsed >= 0 else None
 
 
+def _as_answer_label(raw: Any) -> str | None:
+    """One learner answer as a single stable label.
+
+    UC-10 groups the "most common wrong answer" by string equality, so the label has to be both a
+    string and *canonical*: two learners who picked the same two options must produce the same
+    label whatever order they clicked them in, or the count splits and the most common answer is
+    wrong.
+
+    Multi-valued answers are therefore sorted before joining. Single-valued ones are stringified.
+    A blank result becomes ``None``, which UC-10 reads as "skipped" and excludes from accuracy.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (list, tuple)):
+        parts = sorted(str(item).strip() for item in raw if str(item).strip())
+        label = ", ".join(parts)
+    elif isinstance(raw, dict):
+        # UC-04 renders an answer as ``{"optionIds": [...], "labels": [...]}``. The *labels* are
+        # what the learner saw and what an administrator should read in a report — an option id
+        # tells nobody which answer was popular. Ids are the fallback when a question type has no
+        # labels to show.
+        for key in ("labels", "optionIds", "values", "items"):
+            if raw.get(key):
+                return _as_answer_label(raw[key])
+        label = ", ".join(f"{key}={raw[key]}" for key in sorted(map(str, raw)))
+    else:
+        label = str(raw).strip()
+    return label[:200] or None
+
+
 def _selected_answer(score: QuestionScoreRow | None, answer: AttemptAnswer | None) -> str | None:
     """What the learner chose, as the label the "most common wrong answer" groups by.
 
     UC-04's ``learner_answer_display`` is preferred because it is the human-readable rendering the
     feedback report already shows — so the answer an administrator sees in analytics is the same
-    string the learner saw. The raw payload is a fallback for an attempt scored before that column
-    was populated.
+    text the learner saw. It is a JSON column, because a multi-select answer is a list of labels,
+    which is why it goes through :func:`_as_answer_label` rather than being used directly.
+
+    The raw autosaved payload is the fallback, for an attempt scored before that column was
+    populated.
     """
-    if score is not None and score.learner_answer_display:
-        return score.learner_answer_display
+    if score is not None and score.learner_answer_display is not None:
+        label = _as_answer_label(score.learner_answer_display)
+        if label is not None:
+            return label
     if answer is not None and answer.response is not None:
         raw = answer.response
         if isinstance(raw, dict):
             for key in ("selectedOptionId", "value", "selectedOptionIds", "orderedItemIds"):
-                if key in raw and raw[key] is not None:
-                    value = raw[key]
-                    return ", ".join(map(str, value)) if isinstance(value, list) else str(value)
-        return str(raw)[:200]
+                if raw.get(key) is not None:
+                    return _as_answer_label(raw[key])
+        return _as_answer_label(raw)
     return None
 
 
@@ -221,7 +256,7 @@ class SqlAlchemyAnalyticsRepository(AnalyticsRepository):
 
     async def get_flags(
         self,
-        question_ids: Sequence[str],
+        question_ids: Sequence[str] | None,
         context: QueryContext,
         *,
         statuses: Sequence[FlagStatus] | None = None,
@@ -501,15 +536,21 @@ class SqlAlchemyAnalyticsRepository(AnalyticsRepository):
         return metadata
 
     def _get_flags(
-        self, question_ids: Sequence[str], statuses: Sequence[FlagStatus] | None
+        self, question_ids: Sequence[str] | None, statuses: Sequence[FlagStatus] | None
     ) -> Mapping[str, QuestionFlagRecord]:
-        from app.modules.analytics.models import QuestionFlagRow
+        """Flags keyed by question id.
 
-        if not question_ids:
+        ``question_ids=None`` means **every flagged question** — that is how the content-review
+        queue is populated without first enumerating the whole catalogue, and the protocol says so.
+        An empty *sequence* is the opposite: nothing was asked about, so nothing comes back. The
+        two look similar and mean opposite things, which is exactly why the distinction is written
+        out here rather than left to a falsy check.
+        """
+        if question_ids is not None and not question_ids:
             return {}
-        query = select(QuestionFlagRow).where(
-            QuestionFlagRow.question_id.in_(list(question_ids))
-        )
+        query = select(QuestionFlagRow)
+        if question_ids is not None:
+            query = query.where(QuestionFlagRow.question_id.in_(list(question_ids)))
         if statuses is not None:
             query = query.where(
                 QuestionFlagRow.status.in_([status.value for status in statuses])

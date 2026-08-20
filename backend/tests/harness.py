@@ -34,6 +34,9 @@ LEARNER2_TOKEN = "test-learner2-token"
 #: UC-09's third audience. A distinct role, not a flavour of admin: an assessor signs off on one
 #: learner's result and is named on the review record, while an administrator configures quizzes.
 ASSESSOR_TOKEN = "test-assessor-token"
+#: The cohorts the two learners are enrolled in, so a test can filter by one and get one.
+LEARNER_COHORT = "cohort-a"
+LEARNER2_COHORT = "cohort-b"
 #: The service credential UC-09's system endpoints require — the session monitor, the certificate
 #: service, the recovery sweep. Deliberately not reachable from a browser.
 SYSTEM_TOKEN = "test-system-token"
@@ -248,11 +251,15 @@ def build_ctx(
 
         # UC-03 refuses to create an attempt for a learner who is not enrolled, so the platform
         # placeholder is stocked here alongside the identities.
-        for learner_row in (learner, learner2):
+        #
+        # The two learners are put in *different* cohorts, which is what lets UC-10's cohort filter
+        # be tested against real data rather than against a fixture that agrees with itself.
+        for learner_row, cohort in ((learner, "cohort-a"), (learner2, "cohort-b")):
             session.add(
                 Enrolment(
                     learner_id=str(learner_row.id),
                     course_id=str(course.id),
+                    cohort_id=cohort,
                     status=EnrolmentStatus.ACTIVE.value,
                 )
             )

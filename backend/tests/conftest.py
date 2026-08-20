@@ -53,6 +53,11 @@ from tests import harness  # noqa: E402  (imports app modules, so it must come a
 
 #: Child-before-parent order, so truncation never trips a foreign key.
 _TRUNCATION_ORDER = [
+    # UC-10 — analytics. Both tables reference questions and administrators softly. The audit
+    # table refuses UPDATE by trigger but permits DELETE, which is what lets this cleanup run; see
+    # the note in ``analytics/models.py`` for why that is the line every capability draws.
+    "qy_review_actions",
+    "qy_question_flags",
     # Newest capability first, which is also child-before-parent. A capability whose tables are
     # missing from this list leaks state between tests, and the symptom is a *later* test failing
     # on a uniqueness constraint it never triggered itself.

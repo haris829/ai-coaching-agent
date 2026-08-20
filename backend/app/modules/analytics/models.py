@@ -155,23 +155,23 @@ class ReviewActionRow(Base):
 # Immutability, enforced by the database
 # ---------------------------------------------------------------------------
 #
-# The audit table is append-only, and a service promising not to update it is not the same as a
-# database refusing to. Following the pattern UC-05, UC-06 and UC-07 established for their own
+# The audit table's rows are immutable, and a service promising not to rewrite one is not the same
+# as a database refusing to. Following the pattern UC-05, UC-06 and UC-07 established for their own
 # append-only tables: a trigger per dialect, attached to ``after_create`` so a ``create_all``
-# database and a migrated one carry the same guarantee, with the DDL defined once here and
-# imported by the migration rather than copied into it.
+# database and a migrated one carry the same guarantee, with the DDL defined once here and imported
+# by the migration rather than copied into it.
+#
+# **UPDATE is refused; DELETE is not.** That is the same line every other capability draws, and it
+# is drawn deliberately. Rewriting an audit row would make "who cleared this flag?" answerable but
+# wrong, which is worse than unanswerable — so the database refuses it outright. Deletion is a
+# different question: data-retention and erasure obligations are real, and a trigger that blocked
+# them would have to be dropped to satisfy one, at which point the guarantee is gone anyway. What
+# stops UC-10 deleting an audit row is that no method exists to do it — the protocol declares none
+# and the repository implements none — which is the same way UC-08 protects its grants.
 
 _SQLITE_ACTION_TRIGGER = f"""
 CREATE TRIGGER IF NOT EXISTS trg_{TABLE_PREFIX}review_action_no_update
 BEFORE UPDATE ON {TABLE_PREFIX}review_actions
-BEGIN
-    SELECT RAISE(ABORT, 'review actions are append-only');
-END
-"""
-
-_SQLITE_ACTION_DELETE_TRIGGER = f"""
-CREATE TRIGGER IF NOT EXISTS trg_{TABLE_PREFIX}review_action_no_delete
-BEFORE DELETE ON {TABLE_PREFIX}review_actions
 BEGIN
     SELECT RAISE(ABORT, 'review actions are append-only');
 END
@@ -187,18 +187,15 @@ $$ LANGUAGE plpgsql
 """
 
 _POSTGRES_ACTION_TRIGGER = f"""
-CREATE TRIGGER trg_{TABLE_PREFIX}review_action_no_change
-BEFORE UPDATE OR DELETE ON {TABLE_PREFIX}review_actions
+CREATE TRIGGER trg_{TABLE_PREFIX}review_action_no_update
+BEFORE UPDATE ON {TABLE_PREFIX}review_actions
 FOR EACH ROW EXECUTE FUNCTION fn_reject_{TABLE_PREFIX}review_action_change()
 """
 
 
 def trigger_names() -> list[str]:
     """Every trigger this module defines, for the migration and the schema test."""
-    return [
-        f"trg_{TABLE_PREFIX}review_action_no_update",
-        f"trg_{TABLE_PREFIX}review_action_no_delete",
-    ]
+    return [f"trg_{TABLE_PREFIX}review_action_no_update"]
 
 
 def trigger_table(trigger_name: str) -> str:
@@ -208,7 +205,7 @@ def trigger_table(trigger_name: str) -> str:
 
 
 def sqlite_trigger_statements() -> list[str]:
-    return [_SQLITE_ACTION_TRIGGER, _SQLITE_ACTION_DELETE_TRIGGER]
+    return [_SQLITE_ACTION_TRIGGER]
 
 
 def postgres_trigger_statements() -> list[str]:
