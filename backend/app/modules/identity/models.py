@@ -55,6 +55,18 @@ class Enrolment(Base):
     #: The UC-01 course this enrolment is for, as an opaque string so the column does not
     #: constrain how the company identifies courses.
     course_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    #: The learner group this enrolment belongs to, for UC-10's cohort filter.
+    #:
+    #: On the enrolment rather than on the user, because a cohort is a *grouping within a course* —
+    #: "the January intake on the safeguarding course" — and the same learner may sit in different
+    #: cohorts on different courses. It lives with the platform placeholder for the same reason
+    #: enrolment status does: a cohort is the company's concept, not any one capability's, and
+    #: UC-10 only reads it.
+    #:
+    #: Nullable, because a learner need not belong to one. UC-10 treats an attempt with no cohort
+    #: as matching no cohort filter rather than matching every one.
+    cohort_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=EnrolmentStatus.ACTIVE.value
     )
@@ -63,6 +75,8 @@ class Enrolment(Base):
     __table_args__ = (
         CheckConstraint(f"status IN ({ENROLMENT_STATUS_VALUES})", name="enrolment_status"),
         Index(f"ix_{PLATFORM_PREFIX}enrolments_course_id", "course_id"),
+        # UC-10 filters analytics by cohort within a course, which is this exact pair.
+        Index(f"ix_{PLATFORM_PREFIX}enrolments_cohort", "course_id", "cohort_id"),
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid

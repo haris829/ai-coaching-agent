@@ -8,6 +8,12 @@ requires-python = ">=3.11"
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q --strict-markers"
+markers = [
+    # UC-10's large-dataset checks. Marked so they can be skipped on a laptop and required in CI:
+    # the requirement is that the dashboard performs correctly with 500+ attempts, and a test that
+    # builds that dataset is slower than the rest of the suite by design.
+    "performance: builds a large dataset to check aggregation at scale",
+]
 filterwarnings = [
     "error::DeprecationWarning:app.*",
 ]

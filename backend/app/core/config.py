@@ -163,6 +163,36 @@ class Settings(BaseSettings):
     #: and a deployment that could switch one off through configuration would be a deployment where
     #: the rule was never enforced.
 
+    # ---- UC-10 Analytics & Reporting -------------------------------------
+    #
+    # Only the values a deployment genuinely sets per environment. UC-10 keeps its own defaults for
+    # everything else, and its ``AnalyticsSettings`` remains a separate object because an
+    # administrator validates candidate values against it at runtime — see
+    # ``analytics/container.py`` for why that distinction is deliberate.
+
+    #: Wrong-answer percentage above which a question is flagged for content review. Strictly
+    #: greater-than, so a threshold of 40 flags a question at 40.1% and not at 40%.
+    analytics_flag_threshold: float = Field(default=40.0, gt=0.0, le=100.0)
+    #: Graded responses a question needs before it can be flagged at all. Stops a question being
+    #: flagged on the strength of one wrong answer.
+    analytics_flag_min_responses: int = Field(default=5, ge=1, le=100_000)
+
+    #: Wall-clock budget for one analytics query. An administrator can also cancel in flight.
+    analytics_query_timeout_seconds: float = Field(default=30.0, gt=0.0, le=3600.0)
+    #: Page size the aggregation requests from the repository.
+    analytics_page_size: int = Field(default=500, ge=1, le=50_000)
+    #: Safety stop: abort aggregation once this many records have been scanned, so a
+    #: mis-specified filter cannot exhaust memory.
+    analytics_max_scanned_records: int = Field(default=5_000_000, ge=1)
+    #: Maximum data rows written to a single CSV export.
+    analytics_export_max_rows: int = Field(default=100_000, ge=1)
+
+    #: Explicit confirmation that DANGEROUS analytics values are intended — a 0.1% flag threshold,
+    #: for instance, which would flag virtually every question and make the review queue
+    #: meaningless. Off by default, and the ``/config/validate`` endpoint reports what it would
+    #: allow before anyone turns it on.
+    analytics_allow_dangerous_configuration: bool = Field(default=False)
+
     # ---- Local development convenience ---------------------------------
     #: Seed a brand new local database so the workflow is demonstrable immediately.
     #: Always off under ``ENVIRONMENT=test``.

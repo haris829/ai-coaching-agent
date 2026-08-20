@@ -60,6 +60,18 @@ _FORBIDDEN_CONTEXT_FRAGMENTS: tuple[str, ...] = (
     "learner_name",
     "learner_email",
     "coaching_context",
+    # Added when UC-10 arrived. Its own redaction list held these three and the shared one did
+    # not, so rather than keep two lists they are folded in here — which also means UC-07's and
+    # UC-08's log lines gain the same protection for free.
+    #
+    # ``learner_id`` is deliberately *not* on this list, even though UC-10's was: an operator
+    # tracing one learner's failed request needs it, every capability already logs it, and it is
+    # an opaque identifier rather than personal data. UC-10's stricter choice made sense for a
+    # service that only ever aggregated; it would blind the rest of the system.
+    "api_key",
+    "secret",
+    "password",
+    "token",
 )
 
 #: Keys that contain a forbidden fragment but are safe and operationally necessary: they hold
@@ -116,14 +128,50 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
-def _safe(value: Any) -> Any:
+#: How deep the formatter will walk a nested context value before truncating.
+#:
+#: Ten is far past anything a log line legitimately carries, and the guard exists for the case that
+#: is not legitimate: a structure that references itself. Without it the recursion below would
+#: exhaust the stack *inside the log formatter* — crashing while trying to report a problem, which
+#: is the worst possible place to fail. UC-10 shipped with this guard and the shared formatter did
+#: not, so it was folded in.
+_MAX_CONTEXT_DEPTH = 10
+
+#: What replaces a value nested deeper than the limit. Says so rather than dropping it silently.
+TRUNCATED = "[truncated]"
+
+
+def _safe(value: Any, depth: int = 0) -> Any:
+    """Render a context value as JSON-safe data, **redacting forbidden keys at every depth**.
+
+    The recursion into nested dictionaries is the point, and it was a real hole before UC-10
+    arrived: the formatter checked the top-level context key only, so ``extra={"payload":
+    {"selected_answer": "B"}}`` passed the check on ``payload`` and emitted the answer. UC-10's own
+    redaction recursed; the shared one now does too, which closes the hole for every capability
+    rather than only for the one that noticed it.
+    """
     if isinstance(value, (str, int, float, bool, type(None))):
         return value
+    if depth >= _MAX_CONTEXT_DEPTH:
+        return TRUNCATED
     if isinstance(value, (list, tuple, set)):
-        return [_safe(item) for item in value]
+        return [_safe(item, depth + 1) for item in value]
     if isinstance(value, dict):
-        return {str(k): _safe(v) for k, v in value.items()}
+        return {
+            str(key): (_safe(item, depth + 1) if _permitted(str(key)) else REDACTED)
+            for key, item in value.items()
+        }
     return str(value)
+
+
+def redact(value: Any) -> Any:
+    """Public form of :func:`_safe`, for a caller that needs to sanitise before logging.
+
+    Most call sites should not need this — the formatter redacts on the way out, which is the
+    reliable place because it cannot be forgotten. It exists for the case where a structure is
+    assembled once and logged from several places, and the sanitising is better done at the source.
+    """
+    return _safe(value)
 
 
 class ContextLogger(logging.LoggerAdapter):

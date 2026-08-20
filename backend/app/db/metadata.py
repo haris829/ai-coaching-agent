@@ -9,6 +9,7 @@ import error.
 from __future__ import annotations
 
 from app.db.base import Base
+from app.modules.analytics import models as analytics_models  # noqa: F401
 from app.modules.attempt_delivery import models as attempt_delivery_models  # noqa: F401
 from app.modules.certification import models as certification_models  # noqa: F401
 from app.modules.coaching import models as coaching_models  # noqa: F401

@@ -11,6 +11,7 @@ Six capabilities, one API, one database, one error envelope:
 * **UC-07 AI Coaching Review Mode** — ``/api/v1/attempts/{id}/coaching/…``
 * **UC-08 Retake Management** — ``/api/v1/quizzes/{id}/retakes`` · ``/api/admin/retakes/…``
 * **UC-09 Formal Assessment Mode** — ``/api/v1/formal-attempts/…`` · ``/api/assessor/…``
+* **UC-10 Analytics & Reporting** — ``/api/admin/analytics/…``
 
 Each is a separate module, and every dependency between them crosses a port with exactly one
 adapter behind it:
@@ -32,6 +33,8 @@ adapter behind it:
           ──Scoring/PassFail──▶ UC-04/UC-05 · ──CertificateWorkflow──▶ UC-05
     UC-07 ◀──FormalAssessmentPolicyPort── UC-09   (coaching is refused mid-exam)
     UC-05 ◀──CertificateGatePort────────── UC-09   (no certificate before approval)
+    UC-10 ──AnalyticsRepository──▶ UC-02/03/04/05 (read-only; no mutating method exists)
+          ──ReviewRepository──▶ its own qy_ tables (flags + append-only audit)
 
 No module imports another's models directly, there is exactly one question bank, and exactly one
 owner of attempts. ``tests/test_architecture.py`` enforces that rather than trusting it.
@@ -52,6 +55,8 @@ from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.db.session import engine
+from app.modules.analytics.api.router import analytics_router
+from app.modules.analytics.container import AnalyticsAppContext
 from app.modules.attempt_delivery.api.deps import attach_request_id
 from app.modules.attempt_delivery.api.router import attempt_delivery_router
 from app.modules.attempt_delivery.container import AppContext
@@ -136,6 +141,7 @@ def create_app(
     coaching_context: CoachingAppContext | None = None,
     retake_context: RetakeAppContext | None = None,
     formal_context: FormalAssessmentAppContext | None = None,
+    analytics_context: AnalyticsAppContext | None = None,
 ) -> FastAPI:
     """Build the app.
 
@@ -145,7 +151,8 @@ def create_app(
     instance — and ``coaching_context`` for UC-07, whose AI provider is the boundary a test most
     needs to control. ``retake_context`` does the same for UC-08, and
     ``formal_context`` for UC-09 — whose assessor directory and review queue are the boundaries a
-    test most needs to control.
+    test most needs to control. ``analytics_context`` does the same for UC-10, whose slow and
+    failing providers are what its own suite exists to exercise.
     """
     configure_logging()
 
@@ -211,6 +218,13 @@ def create_app(
     # per-session UC-03 attempt provider, and a certificate workflow that calls UC-05's own
     # service once an assessor approves. Both are passed in rather than resolved inside UC-09's
     # composition root, which is not allowed to know which capability satisfies one of its ports.
+    # UC-10 needs only the session factory and the clock: it reads other capabilities' rows
+    # through a projection that has no mutating method, and owns two tables of its own. Nothing
+    # it does can change an attempt, so there is no capability it has to be handed.
+    app.state.analytics = analytics_context or AnalyticsAppContext(
+        session_factory=context.session_factory, clock=context.clock
+    )
+
     app.state.formal_assessment = formal_context or FormalAssessmentAppContext(
         session_factory=context.session_factory,
         upstream=formal_attempt_provider_factory(context),
@@ -266,6 +280,7 @@ def create_app(
                 "UC-07 AI Coaching Review Mode",
                 "UC-08 Retake Management",
                 "UC-09 Formal Assessment Mode",
+                "UC-10 Analytics & Reporting",
             ],
             "database": "ok" if database_ok else "unreachable",
             "environment": settings.environment,
@@ -299,6 +314,10 @@ def create_app(
     app.include_router(retake_admin_router, prefix=f"{settings.api_prefix}/admin/retakes")
     # UC-09's learner half joins the same versioned conversation; its assessor and system halves
     # get their own roots, because they carry different credentials.
+    # UC-10 is an administrator capability end to end — every endpoint reads or reviews aggregate
+    # data and none of it is learner-facing — so it joins the admin surface rather than the
+    # versioned learner one. See ``analytics/api/router.py``.
+    app.include_router(analytics_router, prefix=f"{settings.api_prefix}/admin")
     app.include_router(formal_assessment_router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(formal_assessor_router, prefix=f"{settings.api_prefix}/assessor")
     app.include_router(
