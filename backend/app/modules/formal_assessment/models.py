@@ -244,7 +244,12 @@ class DeviceSessionRow(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     formal_attempt_id: Mapped[str] = mapped_column(
         String(36),
-        ForeignKey(f"{TABLE_PREFIX}formal_attempts.id", ondelete="CASCADE"),
+        ForeignKey(
+            f"{TABLE_PREFIX}formal_attempts.id",
+            ondelete="CASCADE",
+            # Named explicitly; the composed name is 65 characters, past PostgreSQL's limit.
+            name="fk_qs_device_sessions_formal_attempt_id",
+        ),
         nullable=False,
     )
     learner_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -325,7 +330,10 @@ class FormalReviewRow(Base):
     percentage: Mapped[float | None] = mapped_column(Float, nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(nullable=True)
     auto_submitted: Mapped[bool] = mapped_column(
-        Boolean(create_constraint=False), nullable=False, default=False, server_default=text("0")
+        Boolean(create_constraint=False),
+        nullable=False,
+        default=False,
+        server_default=text("false"),
     )
     anomaly_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")

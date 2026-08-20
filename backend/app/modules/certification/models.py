@@ -107,10 +107,10 @@ class AttemptOutcome(Base):
             "attempts_remaining_at_outcome IS NULL OR attempts_remaining_at_outcome >= 0",
             name="attempts_remaining_non_negative",
         ),
-        CheckConstraint("certificate_required IN (0, 1)", name="certificate_required"),
+        CheckConstraint("certificate_required IN (TRUE, FALSE)", name="certificate_required"),
         # A certificate is due exactly when the learner passed.
         CheckConstraint(
-            "(outcome = 'PASS') = (certificate_required = 1)", name="certificate_follows_outcome"
+            "(outcome = 'PASS') = certificate_required", name="certificate_follows_outcome"
         ),
         Index(f"ix_{TABLE_PREFIX}attempt_outcomes_learner_quiz", "learner_id", "quiz_id"),
         Index(f"ix_{TABLE_PREFIX}attempt_outcomes_outcome", "outcome"),
@@ -239,7 +239,7 @@ class CpdRecord(Base):
 
     __table_args__ = (
         CheckConstraint(f"status IN ({_CPD_STATUS_VALUES})", name="status"),
-        CheckConstraint("passed IN (0, 1)", name="passed"),
+        CheckConstraint("passed IN (TRUE, FALSE)", name="passed"),
         CheckConstraint(
             "score_percentage >= 0 AND score_percentage <= 100", name="score_percentage_range"
         ),

@@ -244,9 +244,9 @@ def upgrade() -> None:
     sa.Column('source', sa.String(length=16), nullable=False),
     sa.Column('saved_at', app.db.types.UtcDateTime(timezone=True), nullable=False),
     sa.CheckConstraint("source IN ('MANUAL', 'AUTOSAVE', 'SYSTEM')", name=op.f('ck_qd_attempt_answer_revisions_ck_answer_revision_source')),
-    sa.CheckConstraint('answered IN (0, 1)', name=op.f('ck_qd_attempt_answer_revisions_ck_answer_revision_answered')),
+    sa.CheckConstraint('answered IN (TRUE, FALSE)', name=op.f('ck_qd_attempt_answer_revisions_ck_answer_revision_answered')),
     sa.ForeignKeyConstraint(['attempt_id'], ['qd_attempts.id'], name=op.f('fk_qd_attempt_answer_revisions_attempt_id_qd_attempts'), ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['attempt_question_id'], ['qd_attempt_questions.id'], name=op.f('fk_qd_attempt_answer_revisions_attempt_question_id_qd_attempt_questions'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['attempt_question_id'], ['qd_attempt_questions.id'], name=op.f('fk_qd_answer_revisions_attempt_question_id'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_qd_attempt_answer_revisions')),
     sa.UniqueConstraint('attempt_question_id', 'revision', name='ux_answer_revision')
     )
@@ -267,9 +267,9 @@ def upgrade() -> None:
     sa.Column('first_saved_at', app.db.types.UtcDateTime(timezone=True), nullable=False),
     sa.Column('saved_at', app.db.types.UtcDateTime(timezone=True), nullable=False),
     sa.CheckConstraint("source IN ('MANUAL', 'AUTOSAVE', 'SYSTEM')", name=op.f('ck_qd_attempt_answers_ck_answer_source')),
-    sa.CheckConstraint('(answered = 1 AND response IS NOT NULL) OR (answered = 0 AND response IS NULL)', name=op.f('ck_qd_attempt_answers_ck_answer_payload')),
-    sa.CheckConstraint('answered IN (0, 1)', name=op.f('ck_qd_attempt_answers_ck_answer_answered')),
-    sa.CheckConstraint('complete IN (0, 1) AND (complete = 0 OR answered = 1)', name=op.f('ck_qd_attempt_answers_ck_answer_complete')),
+    sa.CheckConstraint('(answered AND response IS NOT NULL) OR (NOT answered AND response IS NULL)', name=op.f('ck_qd_attempt_answers_ck_answer_payload')),
+    sa.CheckConstraint('answered IN (TRUE, FALSE)', name=op.f('ck_qd_attempt_answers_ck_answer_answered')),
+    sa.CheckConstraint('complete IN (TRUE, FALSE) AND (NOT complete OR answered)', name=op.f('ck_qd_attempt_answers_ck_answer_complete')),
     sa.CheckConstraint('revision >= 1', name=op.f('ck_qd_attempt_answers_ck_answer_revision')),
     sa.ForeignKeyConstraint(['attempt_id'], ['qd_attempts.id'], name=op.f('fk_qd_attempt_answers_attempt_id_qd_attempts'), ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['attempt_question_id'], ['qd_attempt_questions.id'], name=op.f('fk_qd_attempt_answers_attempt_question_id_qd_attempt_questions'), ondelete='CASCADE'),
@@ -285,10 +285,10 @@ def upgrade() -> None:
     sa.Column('flagged', sa.Boolean(), nullable=False),
     sa.Column('flagged_at', app.db.types.UtcDateTime(timezone=True), nullable=True),
     sa.Column('updated_at', app.db.types.UtcDateTime(timezone=True), nullable=False),
-    sa.CheckConstraint('(flagged = 1) = (flagged_at IS NOT NULL)', name=op.f('ck_qd_attempt_question_flags_ck_flag_instant')),
-    sa.CheckConstraint('flagged IN (0, 1)', name=op.f('ck_qd_attempt_question_flags_ck_flag_value')),
+    sa.CheckConstraint('flagged = (flagged_at IS NOT NULL)', name=op.f('ck_qd_attempt_question_flags_ck_flag_instant')),
+    sa.CheckConstraint('flagged IN (TRUE, FALSE)', name=op.f('ck_qd_attempt_question_flags_ck_flag_value')),
     sa.ForeignKeyConstraint(['attempt_id'], ['qd_attempts.id'], name=op.f('fk_qd_attempt_question_flags_attempt_id_qd_attempts'), ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['attempt_question_id'], ['qd_attempt_questions.id'], name=op.f('fk_qd_attempt_question_flags_attempt_question_id_qd_attempt_questions'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['attempt_question_id'], ['qd_attempt_questions.id'], name=op.f('fk_qd_question_flags_attempt_question_id'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_qd_attempt_question_flags')),
     sa.UniqueConstraint('attempt_id', 'attempt_question_id', name='ux_flag_per_attempt_question')
     )
@@ -304,8 +304,8 @@ def upgrade() -> None:
     op.drop_table('qc_attempts')
     with op.batch_alter_table('qc_configuration_versions', schema=None) as batch_op:
         batch_op.add_column(sa.Column('question_presentation', sa.String(length=32), server_default='ALL_AT_ONCE', nullable=False))
-        batch_op.add_column(sa.Column('randomise_option_order', sa.Boolean(), server_default=sa.text('0'), nullable=False))
-        batch_op.add_column(sa.Column('allow_incomplete_submission', sa.Boolean(), server_default=sa.text('1'), nullable=False))
+        batch_op.add_column(sa.Column('randomise_option_order', sa.Boolean(), server_default=sa.text('false'), nullable=False))
+        batch_op.add_column(sa.Column('allow_incomplete_submission', sa.Boolean(), server_default=sa.text('true'), nullable=False))
         # Autogenerate does not emit CHECK constraints for added columns. Without this, a migrated
         # database would accept a presentation value the models reject — and the drift test that
         # caught this is the only thing standing between that and production.
@@ -345,7 +345,7 @@ def downgrade() -> None:
     sa.CheckConstraint("status IN ('in_progress', 'submitted', 'abandoned')", name=op.f('ck_qc_attempts_status')),
     sa.CheckConstraint('attempt_number >= 1', name=op.f('ck_qc_attempts_attempt_number')),
     sa.CheckConstraint('score_percent IS NULL OR score_percent BETWEEN 0 AND 100', name=op.f('ck_qc_attempts_score_percent')),
-    sa.ForeignKeyConstraint(['configuration_version_id'], ['qc_configuration_versions.id'], name=op.f('fk_qc_attempts_configuration_version_id_qc_configuration_versions'), ondelete='RESTRICT'),
+    sa.ForeignKeyConstraint(['configuration_version_id'], ['qc_configuration_versions.id'], name=op.f('fk_qc_attempts_configuration_version_id'), ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['quiz_id'], ['qc_quizzes.id'], name=op.f('fk_qc_attempts_quiz_id_qc_quizzes'), ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['user_id'], ['qa_users.id'], name=op.f('fk_qc_attempts_user_id_qa_users'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_qc_attempts')),

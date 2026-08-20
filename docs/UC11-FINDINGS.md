@@ -220,3 +220,85 @@ have neither constraints nor outages.
 class's `__init__` — 292 sites — and fails on any mismatch. It would have caught all three on the
 commit that introduced them, and it carries a companion test proving the binding check still rejects
 what it is supposed to reject.
+
+---
+
+## Defects found by the first real PostgreSQL run
+
+The system was developed against SQLite and is deployed against PostgreSQL. That difference hid
+three classes of defect, and **the migration could not complete on PostgreSQL at all** — meaning the
+deployment would have failed on its first boot, before serving a single request.
+
+None was visible to any of the 2045 tests, for one structural reason: every test runs on SQLite, and
+SQLite is permissive in exactly the places PostgreSQL is not.
+
+### F-21 — eight identifiers exceeded PostgreSQL's 63-character limit (critical)
+
+`NAMEDATALEN` caps an identifier at 63 characters. SQLite has no limit. The metadata naming
+convention composes table, column and referred-table names — right for readability, and it produced
+names of 64 to **93** characters:
+
+| Characters | Identifier |
+|---|---|
+| 93 | `fk_qc_configuration_version_question_types_configuration_version_id_qc_configuration_versions` |
+| 85 | `fk_qc_configuration_version_topics_configuration_version_id_qc_configuration_versions` |
+| 71 | `fk_qd_attempt_answer_revisions_attempt_question_id_qd_attempt_questions` |
+| 71 | `fk_qc_quizzes_active_configuration_version_id_qc_configuration_versions` |
+| 69 | `fk_qd_attempt_question_flags_attempt_question_id_qd_attempt_questions` |
+| 65 | `fk_qs_formal_device_sessions_formal_attempt_id_qs_formal_attempts` |
+| 65 | `ck_qb_question_options_question_options_correct_position_positive` |
+| 64 | `ck_qb_question_usages_question_usages_delivery_position_positive` |
+
+The migration died on revision 2 of 9 with `IdentifierError`. Where SQLAlchemy *can* recover it
+truncates to a prefix plus a four-hex-digit hash, which is worse than failing: the name becomes
+opaque, unstable across schema edits, and no longer matches what the models declare.
+
+*Fixed:* each named explicitly, keeping the convention's shape and dropping the redundant
+referred-table suffix. The convention itself is unchanged — altering it would rename every
+constraint in forty tables and invalidate names the existing migrations already reference.
+
+### F-22 — sixteen boolean predicates were SQLite-only (critical)
+
+SQLite has no boolean type; it stores 0/1 in an INTEGER. PostgreSQL has a real boolean and no
+implicit cast, so `answered = 1` is `operator does not exist: boolean = integer`. Affected: UC-03's
+answer payload and completeness constraints, UC-03's flag-instant constraint, UC-05's
+certificate-follows-outcome constraint, and the domain guards on UC-03, UC-04, UC-05, UC-06, UC-07
+and UC-09.
+
+Two boolean columns also carried `server_default=text("0")`, which PostgreSQL rejects as
+`column is of type boolean but default expression is of type integer`.
+
+*Fixed:* `col IN (0, 1)` became `col IN (TRUE, FALSE)`; `col = 1` became `col`; `col = 0` became
+`NOT col`; `(col = 1) = (other IS NOT NULL)` became `col = (other IS NOT NULL)`; boolean defaults
+became `true`/`false`. SQLite has folded the TRUE/FALSE keywords to 1/0 since 3.23, so every
+constraint keeps its name, its meaning and its force on both backends. Nothing was relaxed.
+
+### F-23 — a fix introduced the mirror-image defect (high)
+
+The first pass at F-22 replaced `server_default=text("0")` globally rather than per column type,
+which turned four **integer** counters — `identity_rejected_attempts`, `pending_identity_rejections`,
+`anomaly_count`, `publish_attempts` — into `DEFAULT false`. PostgreSQL rejects that just as loudly in
+the other direction: `column is of type integer but default expression is of type boolean`.
+
+Worth recording rather than quietly correcting: it is the reason the regression test below checks
+**both** directions, and a caution about breadth in a mechanical fix.
+
+*Fixed:* the replacement is now type-aware — each column's declared type decides which kind of
+default is legal.
+
+### The gates that stop these recurring
+
+**`tests/test_database_portability.py`** — six static checks over the metadata *and* the migration
+files, so they run on SQLite and still catch PostgreSQL-only faults: identifier length,
+boolean/integer comparisons in CHECK constraints, type-contradicting defaults in both directions,
+boolean/integer comparisons in partial-index predicates, over-long identifiers in migration literals
+(including names split across a line continuation, which is how two of the eight hid from a plain
+search), and type-contradicting defaults in migration literals.
+
+**`scripts/verify_postgres.py`** (`npm run verify:postgres`) — 42 checks against a real server, for
+what static analysis cannot see: that all nine revisions apply, that all eleven immutability
+triggers install and their functions exist, that a trigger genuinely refuses an UPDATE, that the six
+partial unique indexes are genuinely *partial* (a full unique index there would forbid a second
+attempt outright), that 146 CHECK constraints migrated and the rewritten boolean one still rejects a
+bad row, that all 27 foreign keys exist and are enforced without a pragma, and that no identifier
+bears SQLAlchemy's truncation hash. It creates and drops its own database.

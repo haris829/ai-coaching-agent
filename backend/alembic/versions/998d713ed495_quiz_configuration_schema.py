@@ -47,7 +47,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 #: Name of the deferred pointer from a quiz to its newest configuration version.
-ACTIVE_VERSION_FK = "fk_qc_quizzes_active_configuration_version_id_qc_configuration_versions"
+ACTIVE_VERSION_FK = "fk_qc_quizzes_active_version_id"
 
 
 def _create_triggers() -> None:
@@ -225,10 +225,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["configuration_version_id"],
             ["qc_configuration_versions.id"],
-            name=op.f(
-                "fk_qc_configuration_version_question_types_configuration_version_id_"
-                "qc_configuration_versions"
-            ),
+            name=op.f("fk_qc_version_question_types_version_id"),
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
@@ -251,10 +248,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["configuration_version_id"],
             ["qc_configuration_versions.id"],
-            name=op.f(
-                "fk_qc_configuration_version_topics_configuration_version_id_"
-                "qc_configuration_versions"
-            ),
+            name=op.f("fk_qc_version_topics_version_id"),
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint(
@@ -287,7 +281,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["configuration_version_id"],
             ["qc_configuration_versions.id"],
-            name=op.f("fk_qc_attempts_configuration_version_id_qc_configuration_versions"),
+            name=op.f("fk_qc_attempts_configuration_version_id"),
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
@@ -334,7 +328,7 @@ def upgrade() -> None:
             ["attempt_ref", "delivery_position"],
         )
         batch_op.create_check_constraint(
-            "question_usages_delivery_position_positive",
+            "delivery_position_positive",
             "delivery_position IS NULL OR delivery_position >= 1",
         )
 
@@ -349,7 +343,7 @@ def downgrade() -> None:
         # metadata naming convention itself, so passing the already-prefixed name asks it to drop
         # `ck_qb_question_usages_ck_qb_question_usages_…`, which never existed.
         batch_op.drop_constraint(
-            "question_usages_delivery_position_positive", type_="check"
+            "delivery_position_positive", type_="check"
         )
         batch_op.drop_constraint(
             "uq_question_usages_attempt_ref_delivery_position", type_="unique"

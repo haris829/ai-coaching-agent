@@ -91,7 +91,13 @@ class Quiz(Base):
     #: that version — a quiz never points at a half-written version.
     active_configuration_version_id: Mapped[int | None] = mapped_column(
         ForeignKey(
-            f"{TABLE_PREFIX}configuration_versions.id", ondelete="RESTRICT", use_alter=True
+            f"{TABLE_PREFIX}configuration_versions.id",
+            ondelete="RESTRICT",
+            use_alter=True,
+            # Named explicitly: the convention would compose
+            # fk_qc_quizzes_active_configuration_version_id_qc_configuration_versions, which is 71
+            # characters and PostgreSQL refuses anything over 63. See app/db/metadata.py.
+            name="fk_qc_quizzes_active_version_id",
         ),
         nullable=True,
     )
@@ -233,7 +239,13 @@ class ConfigurationVersionQuestionType(Base):
     __tablename__ = f"{TABLE_PREFIX}configuration_version_question_types"
 
     configuration_version_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{TABLE_PREFIX}configuration_versions.id", ondelete="CASCADE"),
+        ForeignKey(
+            f"{TABLE_PREFIX}configuration_versions.id",
+            ondelete="CASCADE",
+            # 93 characters under the convention — the longest in the schema, and well past
+            # PostgreSQL's 63-character limit.
+            name="fk_qc_version_question_types_version_id",
+        ),
         primary_key=True,
     )
     question_type: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -266,7 +278,11 @@ class ConfigurationVersionTopic(Base):
     __tablename__ = f"{TABLE_PREFIX}configuration_version_topics"
 
     configuration_version_id: Mapped[int] = mapped_column(
-        ForeignKey(f"{TABLE_PREFIX}configuration_versions.id", ondelete="CASCADE"),
+        ForeignKey(
+            f"{TABLE_PREFIX}configuration_versions.id",
+            ondelete="CASCADE",
+            name="fk_qc_version_topics_version_id",
+        ),
         primary_key=True,
     )
     topic_id: Mapped[str] = mapped_column(String(36), primary_key=True)

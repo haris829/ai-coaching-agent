@@ -22,6 +22,7 @@
     "verify:e2e": "node scripts/py.mjs --cwd backend -m scripts.verify_e2e",
     "smoke:ui": "node scripts/py.mjs --cwd backend -m scripts.smoke_ui",
     "verify:deployment": "node scripts/py.mjs --cwd backend -m scripts.verify_deployment",
+    "verify:postgres": "node scripts/py.mjs --cwd backend -m scripts.verify_postgres",
     "typecheck": "npm run typecheck --workspace @quiz-agent/frontend",
     "build:web": "npm run build --workspace @quiz-agent/frontend"
   },

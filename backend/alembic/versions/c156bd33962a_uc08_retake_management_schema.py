@@ -113,7 +113,7 @@ def upgrade() -> None:
 
     with op.batch_alter_table('qd_attempts', schema=None) as batch_op:
         batch_op.add_column(sa.Column('retake_of_attempt_id', sa.String(length=36), nullable=True))
-        batch_op.add_column(sa.Column('is_formal_assessment', sa.Boolean(), server_default=sa.text('0'), nullable=False))
+        batch_op.add_column(sa.Column('is_formal_assessment', sa.Boolean(), server_default=sa.text('false'), nullable=False))
         # Hand-written: autogenerate does not compare CHECK constraints. Dropped and recreated
         # rather than altered, because no backend can widen one in place.
         batch_op.drop_constraint('ck_attempt_reason', type_='check')

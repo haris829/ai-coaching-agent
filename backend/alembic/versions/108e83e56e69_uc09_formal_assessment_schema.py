@@ -152,7 +152,7 @@ def upgrade() -> None:
     sa.CheckConstraint("(state = 'ACTIVE' AND closed_at IS NULL) OR (state <> 'ACTIVE')", name=op.f('ck_qs_formal_device_sessions_ck_device_active_not_closed')),
     sa.CheckConstraint("state IN ('ACTIVE', 'CLOSED', 'DISCONNECTED', 'REJECTED')", name=op.f('ck_qs_formal_device_sessions_ck_device_state')),
     sa.CheckConstraint('version >= 1', name=op.f('ck_qs_formal_device_sessions_ck_device_version')),
-    sa.ForeignKeyConstraint(['formal_attempt_id'], ['qs_formal_attempts.id'], name=op.f('fk_qs_formal_device_sessions_formal_attempt_id_qs_formal_attempts'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['formal_attempt_id'], ['qs_formal_attempts.id'], name=op.f('fk_qs_device_sessions_formal_attempt_id'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_qs_formal_device_sessions'))
     )
     with op.batch_alter_table('qs_formal_device_sessions', schema=None) as batch_op:
@@ -170,7 +170,7 @@ def upgrade() -> None:
     sa.Column('state', sa.String(length=32), nullable=False),
     sa.Column('percentage', sa.Float(), nullable=True),
     sa.Column('submitted_at', app.db.types.UtcDateTime(timezone=True), nullable=True),
-    sa.Column('auto_submitted', sa.Boolean(), server_default=sa.text('0'), nullable=False),
+    sa.Column('auto_submitted', sa.Boolean(), server_default=sa.text('false'), nullable=False),
     sa.Column('anomaly_count', sa.Integer(), server_default=sa.text('0'), nullable=False),
     sa.Column('assigned_to', sa.String(length=128), nullable=True),
     sa.Column('review_started_at', app.db.types.UtcDateTime(timezone=True), nullable=True),
@@ -203,9 +203,9 @@ def upgrade() -> None:
         batch_op.create_index('ux_formal_review_attempt', ['formal_attempt_id'], unique=True)
 
     with op.batch_alter_table('qc_configuration_versions', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('is_formal_assessment', sa.Boolean(), server_default=sa.text('0'), nullable=False))
-        batch_op.add_column(sa.Column('requires_human_review', sa.Boolean(), server_default=sa.text('1'), nullable=False))
-        batch_op.add_column(sa.Column('requires_assessor_approval', sa.Boolean(), server_default=sa.text('1'), nullable=False))
+        batch_op.add_column(sa.Column('is_formal_assessment', sa.Boolean(), server_default=sa.text('false'), nullable=False))
+        batch_op.add_column(sa.Column('requires_human_review', sa.Boolean(), server_default=sa.text('true'), nullable=False))
+        batch_op.add_column(sa.Column('requires_assessor_approval', sa.Boolean(), server_default=sa.text('true'), nullable=False))
 
     # The batch rebuild above dropped the table's triggers. Put UC-01's back.
     _reinstate_version_immutability_trigger()

@@ -132,7 +132,7 @@ def upgrade() -> None:
     sa.CheckConstraint("mode IN ('SOCRATIC', 'DIRECT_EXPLANATION')", name=op.f('ck_qk_coaching_sessions_mode')),
     sa.CheckConstraint("status IN ('ACTIVE', 'COMPLETED', 'FAILED', 'UNAVAILABLE')", name=op.f('ck_qk_coaching_sessions_status')),
     sa.CheckConstraint('consecutive_failures >= 0', name=op.f('ck_qk_coaching_sessions_consecutive_failures_non_negative')),
-    sa.CheckConstraint('direct_explanation_offered IN (0, 1)', name=op.f('ck_qk_coaching_sessions_direct_explanation_offered')),
+    sa.CheckConstraint('direct_explanation_offered IN (TRUE, FALSE)', name=op.f('ck_qk_coaching_sessions_direct_explanation_offered')),
     sa.CheckConstraint('direct_explanation_threshold >= 1', name=op.f('ck_qk_coaching_sessions_direct_explanation_threshold_positive')),
     sa.CheckConstraint('exchange_count >= 0', name=op.f('ck_qk_coaching_sessions_exchange_count_non_negative')),
     sa.CheckConstraint('question_position IS NULL OR question_position >= 1', name=op.f('ck_qk_coaching_sessions_position')),

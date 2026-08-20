@@ -216,7 +216,7 @@ class QuestionOption(Base):
         CheckConstraint("position >= 1", name="question_options_position_positive"),
         CheckConstraint(
             "correct_position IS NULL OR correct_position >= 1",
-            name="question_options_correct_position_positive",
+            name="correct_position_positive",
         ),
     )
 
@@ -400,7 +400,7 @@ class QuestionUsage(Base):
         Index(f"ix_{TABLE_PREFIX}question_usages_attempt_status", "attempt_status"),
         CheckConstraint(
             "delivery_position IS NULL OR delivery_position >= 1",
-            name="question_usages_delivery_position_positive",
+            name="delivery_position_positive",
         ),
     )
 
@@ -441,9 +441,9 @@ class QuestionImport(Base):
     __table_args__ = (
         Index(f"ix_{TABLE_PREFIX}question_imports_status", "status"),
         Index(f"ix_{TABLE_PREFIX}question_imports_started_at", "started_at"),
-        CheckConstraint("total_rows >= 0", name="question_imports_total_rows_non_negative"),
-        CheckConstraint("imported_rows >= 0", name="question_imports_imported_non_negative"),
-        CheckConstraint("rejected_rows >= 0", name="question_imports_rejected_non_negative"),
+        CheckConstraint("total_rows >= 0", name="total_rows_non_negative"),
+        CheckConstraint("imported_rows >= 0", name="imported_rows_non_negative"),
+        CheckConstraint("rejected_rows >= 0", name="rejected_rows_non_negative"),
     )
 
     def __repr__(self) -> str:  # pragma: no cover

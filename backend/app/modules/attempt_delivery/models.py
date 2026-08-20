@@ -93,7 +93,7 @@ class QuizAttempt(Base):
     #: must stay true even if the quiz stops being a formal assessment tomorrow. UC-09 owns
     #: the lifecycle around it; UC-03 owns only this flag.
     is_formal_assessment: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
+        Boolean, nullable=False, default=False, server_default=text("false")
     )
 
     #: Persisted so a randomised selection is reproducible and auditable.
@@ -279,17 +279,17 @@ class AttemptAnswer(Base):
     attempt_question: Mapped[AttemptQuestion] = relationship(back_populates="answer")
 
     __table_args__ = (
-        CheckConstraint("answered IN (0, 1)", name="ck_answer_answered"),
+        CheckConstraint("answered IN (TRUE, FALSE)", name="ck_answer_answered"),
         CheckConstraint("source IN ('MANUAL', 'AUTOSAVE', 'SYSTEM')", name="ck_answer_source"),
         CheckConstraint("revision >= 1", name="ck_answer_revision"),
         # "Answered" and "has a response" can never disagree.
         CheckConstraint(
-            "(answered = 1 AND response IS NOT NULL) OR (answered = 0 AND response IS NULL)",
+            "(answered AND response IS NOT NULL) OR (NOT answered AND response IS NULL)",
             name="ck_answer_payload",
         ),
         # Nothing can be complete without being answered.
         CheckConstraint(
-            "complete IN (0, 1) AND (complete = 0 OR answered = 1)", name="ck_answer_complete"
+            "complete IN (TRUE, FALSE) AND (NOT complete OR answered)", name="ck_answer_complete"
         ),
         UniqueConstraint(
             "attempt_id", "attempt_question_id", name="ux_answer_per_attempt_question"
@@ -312,7 +312,16 @@ class AttemptAnswerRevision(Base):
         String(36), ForeignKey("qd_attempts.id", ondelete="CASCADE"), nullable=False
     )
     attempt_question_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("qd_attempt_questions.id", ondelete="CASCADE"), nullable=False
+        String(36),
+        # Named explicitly: the naming convention would compose an identifier longer than
+        # PostgreSQL's 63-character limit, which fails the migration outright. See
+        # app/db/metadata.py.
+        ForeignKey(
+            "qd_attempt_questions.id",
+            ondelete="CASCADE",
+            name="fk_qd_answer_revisions_attempt_question_id",
+        ),
+        nullable=False,
     )
     revision: Mapped[int] = mapped_column(Integer, nullable=False)
     answered: Mapped[bool] = mapped_column(Boolean(create_constraint=False), nullable=False)
@@ -324,7 +333,7 @@ class AttemptAnswerRevision(Base):
     saved_at: Mapped[datetime] = mapped_column(nullable=False)
 
     __table_args__ = (
-        CheckConstraint("answered IN (0, 1)", name="ck_answer_revision_answered"),
+        CheckConstraint("answered IN (TRUE, FALSE)", name="ck_answer_revision_answered"),
         CheckConstraint(
             "source IN ('MANUAL', 'AUTOSAVE', 'SYSTEM')", name="ck_answer_revision_source"
         ),
@@ -343,7 +352,16 @@ class AttemptQuestionFlag(Base):
         String(36), ForeignKey("qd_attempts.id", ondelete="CASCADE"), nullable=False
     )
     attempt_question_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("qd_attempt_questions.id", ondelete="CASCADE"), nullable=False
+        String(36),
+        # Named explicitly: the naming convention would compose an identifier longer than
+        # PostgreSQL's 63-character limit, which fails the migration outright. See
+        # app/db/metadata.py.
+        ForeignKey(
+            "qd_attempt_questions.id",
+            ondelete="CASCADE",
+            name="fk_qd_question_flags_attempt_question_id",
+        ),
+        nullable=False,
     )
     question_id: Mapped[str] = mapped_column(String(64), nullable=False)
     flagged: Mapped[bool] = mapped_column(Boolean(create_constraint=False), nullable=False)
@@ -354,8 +372,8 @@ class AttemptQuestionFlag(Base):
     attempt_question: Mapped[AttemptQuestion] = relationship(back_populates="flag")
 
     __table_args__ = (
-        CheckConstraint("flagged IN (0, 1)", name="ck_flag_value"),
-        CheckConstraint("(flagged = 1) = (flagged_at IS NOT NULL)", name="ck_flag_instant"),
+        CheckConstraint("flagged IN (TRUE, FALSE)", name="ck_flag_value"),
+        CheckConstraint("flagged = (flagged_at IS NOT NULL)", name="ck_flag_instant"),
         UniqueConstraint("attempt_id", "attempt_question_id", name="ux_flag_per_attempt_question"),
         Index("ix_flag_attempt_flagged", "attempt_id", "flagged"),
     )

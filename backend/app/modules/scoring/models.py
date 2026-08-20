@@ -217,7 +217,7 @@ class QuestionScoreRow(Base):
             name="question_type",
         ),
         CheckConstraint("position >= 1", name="position"),
-        CheckConstraint("answered IN (0, 1)", name="answered"),
+        CheckConstraint("answered IN (TRUE, FALSE)", name="answered"),
         CheckConstraint("awarded_marks >= 0 AND maximum_marks >= 0", name="marks_non_negative"),
         CheckConstraint("awarded_marks <= maximum_marks", name="marks_within_maximum"),
         CheckConstraint("deduction >= 0", name="deduction_non_negative"),

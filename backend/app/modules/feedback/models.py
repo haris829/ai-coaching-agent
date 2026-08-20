@@ -107,7 +107,7 @@ class FeedbackReportRow(Base):
         CheckConstraint(
             "time_taken_seconds IS NULL OR time_taken_seconds >= 0", name="time_taken_non_negative"
         ),
-        CheckConstraint("passed IS NULL OR passed IN (0, 1)", name="passed"),
+        CheckConstraint("passed IS NULL OR passed IN (TRUE, FALSE)", name="passed"),
         CheckConstraint(
             "generation_attempt_count >= 0", name="generation_attempt_count_non_negative"
         ),
@@ -175,7 +175,7 @@ class FeedbackItemRow(Base):
 
     __table_args__ = (
         CheckConstraint("position >= 1", name="position"),
-        CheckConstraint("answered IN (0, 1)", name="answered"),
+        CheckConstraint("answered IN (TRUE, FALSE)", name="answered"),
         CheckConstraint(
             "question_score >= 0 AND maximum_marks >= 0 AND deduction >= 0",
             name="marks_non_negative",

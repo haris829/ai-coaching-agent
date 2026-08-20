@@ -31,9 +31,9 @@ def upgrade() -> None:
     sa.Column('created_by', sa.String(length=128), nullable=True),
     sa.Column('started_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
-    sa.CheckConstraint('imported_rows >= 0', name=op.f('ck_qb_question_imports_question_imports_imported_non_negative')),
-    sa.CheckConstraint('rejected_rows >= 0', name=op.f('ck_qb_question_imports_question_imports_rejected_non_negative')),
-    sa.CheckConstraint('total_rows >= 0', name=op.f('ck_qb_question_imports_question_imports_total_rows_non_negative')),
+    sa.CheckConstraint('imported_rows >= 0', name=op.f('ck_qb_question_imports_imported_rows_non_negative')),
+    sa.CheckConstraint('rejected_rows >= 0', name=op.f('ck_qb_question_imports_rejected_rows_non_negative')),
+    sa.CheckConstraint('total_rows >= 0', name=op.f('ck_qb_question_imports_total_rows_non_negative')),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_qb_question_imports'))
     )
     with op.batch_alter_table('qb_question_imports', schema=None) as batch_op:
@@ -131,7 +131,7 @@ def upgrade() -> None:
     sa.Column('feedback', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.CheckConstraint('correct_position IS NULL OR correct_position >= 1', name=op.f('ck_qb_question_options_question_options_correct_position_positive')),
+    sa.CheckConstraint('correct_position IS NULL OR correct_position >= 1', name=op.f('ck_qb_question_options_correct_position_positive')),
     sa.CheckConstraint('position >= 1', name=op.f('ck_qb_question_options_question_options_position_positive')),
     sa.ForeignKeyConstraint(['question_id'], ['qb_questions.id'], name=op.f('fk_qb_question_options_question_id_qb_questions'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_qb_question_options')),

@@ -147,7 +147,10 @@ class CoachingSessionRow(Base):
         ),
         CheckConstraint("revision >= 1", name="revision_positive"),
         CheckConstraint("question_position IS NULL OR question_position >= 1", name="position"),
-        CheckConstraint("direct_explanation_offered IN (0, 1)", name="direct_explanation_offered"),
+        CheckConstraint(
+            "direct_explanation_offered IN (TRUE, FALSE)",
+            name="direct_explanation_offered",
+        ),
         # A completed session always says when, and an uncompleted one never does. Makes "ACTIVE
         # but claiming to have finished" unrepresentable rather than merely unlikely.
         CheckConstraint(
