@@ -2,7 +2,14 @@
 
 Confirms the two halves actually talk to each other: the UI is served, every page module compiles,
 and requests made from the browser origin reach the backend and return real data — for the question
-bank (UC-02), for quiz configuration and learner rules (UC-01), and for taking a quiz (UC-03).
+bank (UC-02), quiz configuration and learner rules (UC-01), taking a quiz (UC-03), its result chain
+(UC-04 to UC-07), retakes and attempt history (UC-08), the supervised sitting and the assessor's
+review queue (UC-09), and the administrator's dashboard (UC-10).
+
+Every page is covered here for a specific reason: a module that fails to transform is a screen that
+renders as a blank page in a browser and as nothing at all in a test suite. TypeScript compiling is
+not the same as Vite serving — a bad import path, a circular dependency or a missing file passes
+`tsc -b` and fails at transform time. This is the only gate that catches that.
 
 This is a contract smoke test, not a browser test: it drives Vite's module transform and the dev
 proxy rather than clicking through a rendered page.
@@ -31,6 +38,9 @@ UI_URL = "http://127.0.0.1:5174"
 
 ADMIN_TOKEN = "smoke-admin-token"
 LEARNER_TOKEN = "smoke-learner-token"
+#: UC-09's assessor queue refuses an administrator credential by design, so reaching it at all
+#: requires a third identity.
+ASSESSOR_TOKEN = "smoke-assessor-token"
 
 failures: list[str] = []
 checks = 0
@@ -124,6 +134,14 @@ def seed_platform_rows(path: Path) -> None:
             "INSERT INTO qa_users (email, display_name, role, api_token, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
             ("smoke-learner@example.com", "Smoke Learner", "learner", LEARNER_TOKEN, now),
+        )
+        # UC-09's assessor. Without this row the review queue cannot be reached at all — an
+        # administrator credential is refused there, which is the rule, so the screen would be
+        # untestable rather than merely empty.
+        connection.execute(
+            "INSERT INTO qa_users (email, display_name, role, api_token, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("smoke-assessor@example.com", "Smoke Assessor", "assessor", ASSESSOR_TOKEN, now),
         )
         connection.execute(
             "INSERT INTO qc_courses (code, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
@@ -230,6 +248,11 @@ def main() -> int:
             "pages/ImportPage.tsx",
             "pages/AttemptReportPage.tsx",
             "pages/AttemptPage.tsx",
+            # The screens added for the deployment review. Each is the only browser-visible surface
+            # for its capability, so a transform failure here is a capability with no UI at all.
+            "pages/RetakePage.tsx",
+            "pages/FormalAssessmentPage.tsx",
+            "pages/AnalyticsPage.tsx",
             "components/IdentitySwitcher.tsx",
             "components/attempt/QuestionInputs.tsx",
             "components/attempt/AttemptReview.tsx",
@@ -242,6 +265,8 @@ def main() -> int:
             "api/attemptTypes.ts",
             "api/resultTypes.ts",
             "api/session.ts",
+            "api/deploymentTypes.ts",
+            "lib/useRole.ts",
         ):
             status, source = fetch(f"{UI_URL}/src/{module}")
             check(
@@ -433,6 +458,106 @@ def main() -> int:
             "an unauthenticated coaching read is refused",
             status == 401,
             f"{status} {refused[:200]}",
+        )
+
+        print()
+        print("UC-08 retake screens can reach their endpoints")
+        print("----------------------------------------------")
+        # The quiz seeded below has no attempts, so what these prove is that the retake surface is
+        # reachable through the proxy and answers in the documented shape. The retake *behaviour* is
+        # covered end to end by scripts.verify_e2e section 30, against a real chain.
+        status, body = authed_fetch(f"{UI_URL}/api/v1/quizzes/1/retake-eligibility", LEARNER_TOKEN)
+        check(
+            "retake eligibility is reachable and reports a state",
+            status == 200 and '"state"' in body,
+            f"{status} {body[:200]}",
+        )
+        status, body = authed_fetch(f"{UI_URL}/api/v1/quizzes/1/attempt-history", LEARNER_TOKEN)
+        check(
+            "attempt history is reachable and reports entries",
+            status == 200 and '"entries"' in body,
+            f"{status} {body[:200]}",
+        )
+        status, refused = authed_fetch(
+            f"{UI_URL}/api/v1/quizzes/1/retake-eligibility", ADMIN_TOKEN
+        )
+        check(
+            "an administrator is not a learner on the retake surface",
+            refused and status == 403,
+            f"{status} {refused[:160]}",
+        )
+
+        print()
+        print("UC-09 formal assessment screens can reach their endpoints")
+        print("---------------------------------------------------------")
+        status, body = authed_fetch(f"{UI_URL}/api/v1/quizzes/1/formal-conditions", LEARNER_TOKEN)
+        check(
+            "the formal conditions read is reachable and answers about a non-formal quiz honestly",
+            # The seeded quiz is not a formal assessment, so the correct answer is a refusal that
+            # says exactly that — not an empty list of conditions a UI would render as "no rules".
+            status in (200, 422) and ("is_formal_assessment" in body or "NOT_FORMAL" in body),
+            f"{status} {body[:200]}",
+        )
+        status, body = authed_fetch(f"{UI_URL}/api/assessor/pending-reviews", ASSESSOR_TOKEN)
+        check(
+            "the assessor review queue is reachable with an assessor credential",
+            status == 200 and '"reviews"' in body,
+            f"{status} {body[:200]}",
+        )
+        status, refused = authed_fetch(f"{UI_URL}/api/assessor/pending-reviews", ADMIN_TOKEN)
+        check(
+            "and refuses an administrator credential",
+            refused and status == 403,
+            f"{status} {refused[:160]}",
+        )
+        status, refused = authed_fetch(f"{UI_URL}/api/assessor/pending-reviews", LEARNER_TOKEN)
+        check(
+            "and refuses a learner credential",
+            refused and status == 403,
+            f"{status} {refused[:160]}",
+        )
+
+        print()
+        print("UC-10 analytics screens can reach their endpoints")
+        print("------------------------------------------------")
+        status, body = authed_fetch(f"{UI_URL}/api/admin/analytics/overall", ADMIN_TOKEN)
+        check(
+            "the analytics dashboard is reachable and reports its data state",
+            status == 200 and '"data_state"' in body,
+            f"{status} {body[:200]}",
+        )
+        check(
+            "an unsat platform reports NO_ATTEMPTS with null rates, not zeros",
+            '"NO_ATTEMPTS"' in body and '"average_score":null' in body.replace(" ", ""),
+            body[:250],
+        )
+        status, body = authed_fetch(f"{UI_URL}/api/admin/analytics/questions", ADMIN_TOKEN)
+        check(
+            "question analytics is reachable",
+            status == 200 and '"items"' in body,
+            f"{status} {body[:200]}",
+        )
+        status, body = authed_fetch(
+            f"{UI_URL}/api/admin/analytics/questions/flagged", ADMIN_TOKEN
+        )
+        check(
+            "the flagged panel is reachable and reports the threshold it used",
+            status == 200 and "threshold_used" in body,
+            f"{status} {body[:200]}",
+        )
+        status, body = authed_fetch(
+            f"{UI_URL}/api/admin/analytics/exports/overall.csv", ADMIN_TOKEN
+        )
+        check(
+            "the CSV export is reachable through the proxy and is CSV, not JSON",
+            status == 200 and "," in body.splitlines()[0] and not body.startswith("{"),
+            f"{status} {body[:160]}",
+        )
+        status, refused = authed_fetch(f"{UI_URL}/api/admin/analytics/overall", LEARNER_TOKEN)
+        check(
+            "analytics refuses a learner credential",
+            refused and status == 403,
+            f"{status} {refused[:160]}",
         )
 
         status, liveness = fetch(f"{UI_URL}/api/health/live")

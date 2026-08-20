@@ -1,6 +1,6 @@
 """FastAPI application factory.
 
-Six capabilities, one API, one database, one error envelope:
+Ten capabilities, one API, one database, one error envelope:
 
 * **UC-01 Quiz Configuration & Rules** — ``/api/admin/quizzes/…``
 * **UC-02 Question Bank Management** — ``/api/question-bank/…``
@@ -86,6 +86,7 @@ from app.modules.retakes.api.router import retake_admin_router, retakes_router
 from app.modules.retakes.container import RetakeAppContext
 from app.modules.retakes.integration.uc03_adapter import attempt_provider_factory
 from app.modules.scoring.api.router import router as scoring_router
+from app.web import mount_frontend, resolve_dist
 
 logger = get_logger(__name__)
 
@@ -324,9 +325,23 @@ def create_app(
         formal_system_router, prefix=f"{settings.api_prefix}/system/formal-assessments"
     )
 
+    # Mounted **after** every router. The SPA fallback is a catch-all on "/{path}", and FastAPI
+    # matches in registration order, so registering it earlier would shadow every API route
+    # declared after it — the kind of mistake that shows up as one endpoint mysteriously returning
+    # HTML.
+    dist = resolve_dist()
+    if dist is not None:
+        mount_frontend(app, dist)
+
     logger.info(
         "app.started",
-        extra={"environment": settings.environment, "api_prefix": settings.api_prefix},
+        extra={
+            "environment": settings.environment,
+            "api_prefix": settings.api_prefix,
+            "database": "sqlite" if settings.is_sqlite else "server",
+            "frontend": "served" if dist is not None else "api-only",
+            "demoIdentities": settings.demo_identities,
+        },
     )
     return app
 
@@ -337,4 +352,6 @@ app = create_app()
 if __name__ == "__main__":  # pragma: no cover
     import uvicorn
 
+    # Development entry point only; a deployment runs `python -m scripts.start`, which migrates
+    # first and binds the platform's port. `--reload` here is the whole reason this branch exists.
     uvicorn.run("app.main:app", host=settings.host, port=settings.port, reload=True)

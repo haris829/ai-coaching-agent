@@ -1,4 +1,4 @@
-# Courses Quiz Agent — backend runtime dependencies (UC-01 … UC-07)
+# Courses Quiz Agent — backend runtime dependencies (UC-01 … UC-11)
 #
 # Deliberately small: FastAPI + SQLAlchemy + Alembic, plus one HTTP client. CSV handling uses the
 # Python standard library `csv` module, so there is no extra parsing dependency.
@@ -17,3 +17,11 @@ pydantic==2.11.9
 pydantic-settings==2.10.1
 python-multipart==0.0.20
 httpx==0.28.1
+
+# PostgreSQL driver, for a deployment whose DATABASE_URL is a server database rather than the
+# local SQLite file. Nothing imports it directly: SQLAlchemy loads it from the URL's dialect, and
+# `Settings` normalises a bare `postgresql://` URL — the form Railway, Heroku and most managed
+# providers hand out — to `postgresql+psycopg://` so this driver is the one selected rather than
+# the absent psycopg2. Without this line the database portability the README promises fails at
+# import time on the first non-SQLite deployment.
+psycopg[binary]==3.2.9

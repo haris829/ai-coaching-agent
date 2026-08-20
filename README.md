@@ -1,6 +1,10 @@
-# Courses Quiz Agent — configuration, question bank, attempt delivery, scoring, certification, feedback and AI coaching
+# Courses Quiz Agent
 
-Seven capabilities, one API, one database, one error envelope:
+**Ten capabilities, one API, one database, one error envelope** — plus a cross-cutting integrity
+layer (UC-11) that validates the other ten rather than adding an eleventh.
+
+Configuration, question bank, attempt delivery, scoring, certification, feedback, AI coaching,
+retakes, formal assessment and analytics.
 
 * **UC-01 — Quiz Configuration & Rules.** An administrator configures a quiz; every meaningful
   change creates a new **immutable configuration version**; learners see a rules summary built from
@@ -23,6 +27,26 @@ Seven capabilities, one API, one database, one error envelope:
   wrong with an AI coach that asks rather than tells — and that is *architecturally incapable* of
   telling, because the answer key is removed before any coaching context is built. With no provider
   configured it reports itself unavailable rather than inventing teaching.
+* **UC-08 — Retake Management.** A retake is a **new, independent attempt**: it draws a fresh paper
+  where the bank allows and records the reuse where it cannot, and it leaves every earlier attempt
+  byte-for-byte unchanged. An administrator can grant one learner extra attempts **without touching
+  the quiz's configured maximum**, so no other learner is affected.
+* **UC-09 — Formal Assessment Mode.** A supervised sitting: conditions acknowledged against a
+  recorded version, identity matched exactly against the platform directory, one device and only
+  one, no pausing, AI coaching refused while it runs, a disconnect that commits the autosaved work
+  rather than losing it — and a pass that produces **no certificate until a named assessor
+  approves**.
+* **UC-10 — Analytics & Reporting.** Aggregate figures over the rows the chain actually wrote, with
+  filters by course, cohort, assessment type and date. It distinguishes *no data* from *a measured
+  zero*, flags questions whose wrong-answer rate is too high, and records what a reviewer did about
+  them in an append-only audit table. It owns two tables and reads everything else through a
+  projection that has **no mutating method**.
+* **UC-11 — Cross-Cutting Integrity, Security & QA.** Not a feature: a validation layer. It builds
+  nothing, and a test enforces that it builds nothing. What it adds is the coverage no single
+  capability owns — is a submitted attempt immutable through *every* route; do all five question
+  types survive delivery, scoring, feedback and a retake; is the answer key unreachable from every
+  endpoint rather than just the coaching one. It has found real defects that green suites did not:
+  see [docs/UC11-FINDINGS.md](docs/UC11-FINDINGS.md).
 
 ```
 Question bank (UC-02)
@@ -106,16 +130,39 @@ npm run dev
 Open <http://localhost:5173>. Interactive API docs: <http://localhost:8000/api/docs>.
 Readiness: <http://localhost:8000/api/health>. Liveness: <http://localhost:8000/api/health/live>.
 
-The seed creates one course, one **deliberately unconfigured** quiz (so the first save produces
-version 1), a bank of six questions of each of the five types, and three identities with both
-learners enrolled on the course. Pick one from the top-bar identity switcher; the development tokens
-are `admin-token`, `learner-token` and `learner2-token`.
+The seed creates one course, **three quizzes**, a bank of six questions of each of the five types,
+and **four identities** with both learners enrolled. Pick one from the top-bar identity switcher;
+the development tokens are `admin-token`, `learner-token`, `learner2-token` and `assessor-token`.
+
+The three quizzes each exist for a reason — one is not enough to reach the system:
+
+| Quiz | State | What it is for |
+|---|---|---|
+| End of Course Assessment | **deliberately unconfigured** | The first administrator save produces version 1, so immutable versioning is visible from the start. |
+| Practice Assessment | pre-configured, 12 questions, 3 attempts, 60% | Sittable immediately, so the learner journey can be walked without configuring anything first. Passing, failing and retaking are all reachable. |
+| Supervised Final Examination | pre-configured as a **formal assessment** | The only way UC-09's conditions, identity confirmation, device session, disconnect handling and assessor approval can be exercised at all. |
+
+Both configured quizzes are configured **through UC-01's own service** — same validation, same
+question-bank capacity check, same immutable version write an administrator's save performs. Nothing
+inserts a configuration row directly, so the seeded state is one the application could have produced.
+
+The seed is idempotent and safe to re-run: a quiz that already has an active configuration version is
+never reconfigured, so it cannot publish a version behind you or disturb an attempt locked to one.
 
 **The whole workflow in the UI:** *Configuration* → save a configuration (watch versions accumulate)
 → *Take a quiz* → start an attempt, answer, flag, review, submit → and the same screen then shows the
 **score**, the **pass/fail verdict with its certificate**, the **per-question feedback** and
 **Review with Larry** — all of which the backend decided. Nothing on that screen is computed in the
 browser.
+
+Then: *Retakes* for eligibility, attempt history and an administrator's grant (UC-08); *Formal
+assessment* for the supervised sitting and — when the **assessor** identity is selected — the review
+queue that decides whether a certificate is ever issued (UC-09); *Analytics* for the administrator's
+dashboard, filters, flagged questions and CSV exports (UC-10).
+
+Role-specific panels are hidden as a courtesy, not as a control. Every endpoint behind them enforces
+the role itself and refuses the wrong credential with 403 — which is why switching identity is the
+quickest way to see the authorization model working.
 
 The coaching panel appears only after submission, which is what "coaching controls are unavailable
 during an active quiz" looks like from the front. The rule itself is the backend's: it refuses an
@@ -127,20 +174,28 @@ the panel shows the defined temporary-unavailable message instead of a conversat
 ## Verify it
 
 ```bash
-npm test                    # backend (1052 tests) + frontend (111 tests)
+npm test                    # backend (2045 tests) + frontend (111 tests)
 npm run test:api            # pytest
 npm run test:web            # vitest
 npm run typecheck           # tsc over the test UI
 npm run lint                # ruff over the backend
-npm run verify:e2e          # 285 checks against a LIVE server on a migrated database
-npm run smoke:ui            # 56 checks, test UI ↔ backend through the Vite dev proxy
+npm run verify:e2e          # 469 checks against a LIVE server on a migrated database
+npm run smoke:ui            # 74 checks, test UI ↔ backend through the Vite dev proxy
 npm run build:web           # production build of the test UI
 ```
 
 `verify:e2e` boots a real uvicorn server on a real database file created by the real Alembic
-migration, drives all seven capabilities over HTTP — configure, author, sit, submit, score, gate,
-report, coach — and re-opens the database file with an independent connection to confirm the data is
-genuinely on disk.
+migration, drives all ten capabilities over HTTP — configure, author, sit, submit, score, gate,
+report, coach, retake, supervise, report on — and re-opens the database file with an independent
+connection to confirm the data is genuinely on disk.
+
+**The two live gates are not redundant with pytest, and they are where the real defects have been
+found.** pytest uses an in-process ASGI client and builds its schema from the models, so it cannot
+see a migration that failed to install a trigger, a CHECK constraint the port fakes do not have, or
+a page module that compiles under `tsc` and fails at Vite transform time. Every one of those has
+happened here: the findings are recorded in
+[docs/UC11-FINDINGS.md](docs/UC11-FINDINGS.md). Sections 30–34 of `verify:e2e` exist because UC-08,
+UC-09 and UC-10 had no live coverage at all, which is exactly where three of them were hiding.
 
 Backend tests are grouped by what they protect:
 
@@ -153,18 +208,31 @@ Backend tests are grouped by what they protect:
 | `tests/certification/`      | 49  | UC-05: pass/fail against the attempt's own pass mark, remaining attempts, certificate issue and retry, duplicate prevention, CPD isolation |
 | `tests/feedback/`           | 26  | UC-06: the six per-question fields, multi-select option breakdown, defined fallbacks, generate-once, retry after failure |
 | `tests/coaching/`           | 263 | UC-07: the coaching gate, incorrect-question eligibility, sanitisation, Socratic behaviour, the five-exchange transition, review-all-wrong-answers, knowledge gaps, failure and retry, adversarial security, the HTTP contract |
-| `tests/integration/`        | 68  | The seams between all seven, the whole chain over HTTP, plus concurrency and data integrity |
+| `tests/retakes/`            | 202 | UC-08: eligibility and the three states, the allowance, fresh-paper selection and recorded reuse, administrator grants and idempotency, history assembly, previous-attempt immutability |
+| `tests/formal_assessment/`  | 284 | UC-09: conditions and their version, identity matching, the single-device lock, no pausing, heartbeat and disconnect, auto-submit, the coaching restriction, the review queue and its recovery, the certificate gate, security bypass attempts |
+| `tests/analytics/`          | 396 | UC-10: every metric and its denominator, no-data versus measured-zero, filters, keyset pagination, timeouts and cancellation, CSV export, flag thresholds, the append-only review trail, dangerous-configuration refusal |
+| `tests/integration/`        | 107 | The seams between all ten, each chain over HTTP with every real adapter, plus concurrency and data integrity |
+| `tests/global_dod/`         | 69  | UC-11: whole-surface immutability, all five question types end to end, autosave and recovery, negative-marking protection, the OpenAPI-wide authorization sweep, six cross-capability journeys, and the guard that keeps UC-11 from becoming a feature |
 | `tests/test_architecture.py`| 16  | The module boundaries and the absence of duplication  |
-| `tests/test_schema_migration.py` | 4 | The Alembic migration against the models, table by table and constraint by constraint |
+| `tests/test_schema_migration.py` | 5 | The Alembic migration against the models — table by table, constraint by constraint, **and trigger by trigger** |
+| `tests/test_error_signatures.py` | 2 | That every `raise SomeError(...)` in the application can actually be constructed. Three separate defects turned a handled failure into an opaque 500 this way, none visible to any other test |
 
 UC-03's suite runs against **in-memory port fakes** for UC-01 and UC-02 rather than the real
-adapters; UC-04/05/06's suites do the same for UC-03 and UC-02, and UC-07's for UC-03, UC-04, UC-06 and
-the AI provider. That is deliberate: each tests its own logic, and several required behaviours are
+adapters; UC-04/05/06's suites do the same for UC-03 and UC-02, UC-07's for UC-03, UC-04, UC-06 and
+the AI provider, and UC-08's, UC-09's and UC-10's for everything upstream of them. That is deliberate: each tests its own logic, and several required behaviours are
 otherwise unreachable — UC-01 correctly *refuses* to publish an incoherent configuration, so "UC-03
 rejects a configuration it cannot deliver" could not be exercised at all, and neither could "the answer
 key is missing", "the paper is worth zero marks", "UC-06 withdrew the report mid-session" or "the model
 times out on the third exchange and recovers on the fourth". The adapters *between* UC-04, UC-05 and
 UC-06 are real even in those suites, so each stage reads the rows the previous one actually wrote.
+
+**What a fake cannot see, and what covers it.** A fake has no CHECK constraints, no unique indexes
+and no triggers, so a rule the *database* enforces is invisible to a suite that uses one. That is
+not a theoretical gap: it hid a constraint that rejected every disconnect submission, and eight
+raise sites in UC-09's persistence layer that turned each uniqueness and concurrency conflict into
+an unhandled `TypeError`. `tests/integration/` (real adapters, real rows) and `npm run verify:e2e`
+(a live server on a migrated database) are what close it, which is why both are gates rather than
+optional extras.
 
 The real UC-01/UC-02/UC-03 and UC-07 adapters are covered by `tests/integration/`, which drives the
 whole chain over HTTP against a real database — including `test_coaching_chain.py`, where the answer key
@@ -279,7 +347,7 @@ The dependency rules are **enforced by tests**, not just documented
 | A capability's `domain/` holds its own rules, and the shared kernel holds none | UC-04 names its own marking policy rather than importing UC-02's authoring vocabulary |
 | UC-04's domain names its own marking policy rather than importing UC-02's scoring strategy | the authoring vocabulary belongs to the question bank; the translation lives in one adapter |
 
-### How the seven capabilities meet
+### How the ten capabilities meet
 
 They meet in exactly two ways.
 
@@ -719,13 +787,27 @@ gap.
 | `COACHING_LLM_PROVIDER` | *(empty — no coach bound)*    | `anthropic` binds the shipped adapter. **Empty means coaching honestly reports itself unavailable** |
 | `COACHING_LLM_API_KEY` | *(empty)*                      | Read from the environment only; never logged or returned |
 | `COACHING_LLM_MODEL` | `claude-sonnet-5`                | Which model the bound provider uses                  |
+| `SYSTEM_API_TOKEN` | *(empty)*                          | Guard on UC-09's platform-internal endpoints. **Required outside development** — unset, they accept an administrator credential, and a caller who can report a disconnect can auto-submit a formal assessment |
+| `DEMO_IDENTITIES` | `false`                             | Whether `GET /api/session` lists the directory's identities **and their tokens**. For a review deployment; off in production |
+| `AUTO_SEED` | `false`                                   | Bootstrap the demo course, three quizzes and four identities on start-up. Idempotent, and never reconfigures a quiz that already has a version |
+| `FRONTEND_DIST` | *(empty)*                             | Directory of the built UI to serve at `/`. Set, the API and UI are one origin and **CORS is absent rather than configured** |
+| `RETAKE_CONFIGURATION_POLICY` | `ACTIVE_AT_RETAKE`      | Which immutable version a retake locks. An unrecognised value refuses to start |
+| `FORMAL_CONDITIONS_VERSION` | `2026.1`                  | Recorded on every acknowledgement, so "which conditions did this learner agree to?" survives a wording change |
+| `SESSION_HEARTBEAT_TIMEOUT_SECONDS` | `90`              | The threshold UC-09 publishes so the platform's session monitor and the module agree on one number |
+| `ANALYTICS_FLAG_THRESHOLD` | `40`                       | Wrong-answer percentage above which a question is flagged for review |
+| `ANALYTICS_FLAG_MIN_RESPONSES` | `5`                    | Graded responses needed before a question can be flagged at all |
+
+`ADMIN_API_TOKEN` and `SYSTEM_API_TOKEN` are **enforced, not advised**: the application refuses to
+start when `ENVIRONMENT` is anything outside `{development, dev, test, local}` and either is unset.
+Both guards are no-ops while unset and the symptom is silent — nothing errors, they simply admit
+everybody — so a requirement nobody enforced would eventually not be met.
 
 No credentials are hard-coded, nothing secret is committed, and no secret, credential, learner answer,
 answer key or coaching conversation is written to a log — the JSON formatter drops any context key
 whose name suggests one, so a careless `extra=` cannot leak even by accident. `backend/.env.example` is the tracked template; `.env` is ignored.
 
 Authentication is a deliberate seam: `app/modules/identity/` resolves a bearer token to a principal
-with a role, and all seven capabilities depend only on that. Replacing
+with a role, and all ten capabilities depend only on that. Replacing
 `app/modules/identity/security.py::resolve_principal` with the platform's real dependency is the
 whole of the identity integration. Enrolment is the same shape: `qa_enrolments` is a placeholder
 behind `EnrolmentPort`.
@@ -737,5 +819,11 @@ behind `EnrolmentPort`.
 * [docs/API.md](docs/API.md) — every endpoint, status code and error code
 * [docs/DATABASE.md](docs/DATABASE.md) — table-by-table schema and the company-database switch-over
 * [docs/CSV_IMPORT.md](docs/CSV_IMPORT.md) — the CSV format per question type, with examples
-* [docs/INTEGRATION.md](docs/INTEGRATION.md) — every seam between the seven capabilities, and the
+* [docs/INTEGRATION.md](docs/INTEGRATION.md) — every seam between the ten capabilities, and the
   ports the company's own systems plug into
+* [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — the hosted architecture, every environment variable a
+  deployment needs, how to verify one actually works, and what is deliberately not production-ready
+* [docs/DEPLOYMENT-AUDIT.md](docs/DEPLOYMENT-AUDIT.md) — the pre-deployment requirements audit:
+  what was verified, what was missing, and what was done about it
+* [docs/UC11-FINDINGS.md](docs/UC11-FINDINGS.md) — every defect the integrity layer has found,
+  including the three that a fully green test suite could not see

@@ -64,6 +64,23 @@ import type {
   StartCoaching,
 } from './coachingTypes';
 import type { SessionInfo } from './session';
+import type {
+  AdditionalAttemptGrant,
+  AnalyticsFilters,
+  AttemptHistory,
+  FlaggedQuestions,
+  FormalAcknowledgement,
+  FormalAttemptState,
+  FormalConditions,
+  FormalIdentityCheck,
+  FormalStarted,
+  OverallAnalytics,
+  PendingReviews,
+  QuestionAnalyticsPage,
+  RetakeCreated,
+  RetakeEligibility,
+  ReviewActionType,
+} from './deploymentTypes';
 
 const API = '/api';
 const BASE = `${API}/question-bank`;
@@ -671,5 +688,307 @@ export const coaching = {
   /** Finish with this question, which advances the review queue past it. Idempotent. */
   complete(sessionId: string): Promise<SessionState> {
     return json(`${V1}/coaching/sessions/${encodeURIComponent(sessionId)}/complete`, 'POST');
+  },
+};
+
+// ---------------------------------------------------------------------------
+// UC-08 — Retake Management
+// ---------------------------------------------------------------------------
+
+/**
+ * UC-08: whether a learner may retake, the retake itself, and the history of every attempt.
+ *
+ * Nothing here re-derives an allowance. `eligibility` is the authoritative answer, computed from
+ * UC-03's attempt count, the locked configuration's maximum and any administrator grant — so the UI
+ * renders a decision the backend made rather than a rule it reimplemented. That matters: a learner
+ * shown "1 attempt left" by a client that counted for itself, and refused by the server, has been
+ * lied to by this layer.
+ */
+export const retakes = {
+  /** May this learner retake, and why or why not. */
+  eligibility(quizId: number | string): Promise<RetakeEligibility> {
+    return get(`${V1}/quizzes/${encodeURIComponent(String(quizId))}/retake-eligibility`);
+  },
+
+  /**
+   * Request a retake. Creates the next attempt through UC-03's own service.
+   *
+   * Idempotent by the database: a repeated request returns the retake that already exists rather
+   * than consuming a second attempt, which is why this is safe to retry after a timeout.
+   */
+  create(quizId: number | string): Promise<RetakeCreated> {
+    return json(`${V1}/quizzes/${encodeURIComponent(String(quizId))}/retakes`, 'POST', {});
+  },
+
+  /** Every attempt at this quiz, assembled read-only from UC-03 through UC-07. */
+  history(quizId: number | string): Promise<AttemptHistory> {
+    return get(`${V1}/quizzes/${encodeURIComponent(String(quizId))}/attempt-history`);
+  },
+
+  /**
+   * Administrator: grant one learner additional attempts at one quiz.
+   *
+   * The idempotency key is required by the API, not optional politeness — repeating a grant without
+   * one could hand out attempts twice. Generated per submission here so a double-click cannot.
+   */
+  grant(input: {
+    learnerId: string;
+    courseId: string;
+    quizId: string;
+    additionalAttempts: number;
+    reason: string;
+    idempotencyKey: string;
+  }): Promise<{ grant: AdditionalAttemptGrant }> {
+    return request(`${API}/admin/retakes/grants`, {
+      method: 'POST',
+      headers: headers({
+        'Content-Type': 'application/json',
+        'Idempotency-Key': input.idempotencyKey,
+      }),
+      body: JSON.stringify({
+        learner_id: input.learnerId,
+        course_id: input.courseId,
+        quiz_id: input.quizId,
+        additional_attempts: input.additionalAttempts,
+        reason: input.reason,
+      }),
+    });
+  },
+
+  /** Administrator: the grants already held by one learner on one quiz. */
+  grants(learnerId: string, quizId: string): Promise<{ grants: AdditionalAttemptGrant[] }> {
+    return get(
+      `${API}/admin/retakes/learners/${encodeURIComponent(learnerId)}/quizzes/${encodeURIComponent(quizId)}/grants`,
+    );
+  },
+};
+
+// ---------------------------------------------------------------------------
+// UC-09 — Formal Assessment Mode
+// ---------------------------------------------------------------------------
+
+/** The header carrying the device's proof. See {@link FormalStarted}. */
+const FORMAL_SESSION_HEADER = 'X-Formal-Session';
+
+/**
+ * UC-09: a supervised sitting.
+ *
+ * The order of the first three calls is enforced by the backend and is not a UI convention:
+ * conditions must be acknowledged before an identity may be confirmed, and an identity before a
+ * device may claim the attempt. This client deliberately does not try to be clever about that —
+ * each step is its own method, and skipping one produces the backend's refusal rather than a
+ * client-side guard that could disagree with it.
+ */
+export const formal = {
+  /** The conditions text and its version. Also says whether this quiz is formal at all. */
+  conditions(quizId: number | string): Promise<FormalConditions> {
+    return get(`${V1}/quizzes/${encodeURIComponent(String(quizId))}/formal-conditions`);
+  },
+
+  /** Acknowledge every condition. Returns the formal attempt this creates. */
+  acknowledge(quizId: number | string, codes: string[]): Promise<FormalAcknowledgement> {
+    return json(
+      `${V1}/quizzes/${encodeURIComponent(String(quizId))}/conditions-acknowledgement`,
+      'POST',
+      { acknowledged_condition_codes: codes },
+    );
+  },
+
+  /**
+   * Confirm identity against the platform directory.
+   *
+   * Matched exactly, after whitespace normalisation, with no configuration switch to relax it. A
+   * mismatch is a refusal, not a warning — that is the point of confirming an identity before a
+   * supervised examination.
+   */
+  confirmIdentity(
+    quizId: number | string,
+    fullName: string,
+    email: string,
+  ): Promise<FormalIdentityCheck> {
+    return json(
+      `${V1}/quizzes/${encodeURIComponent(String(quizId))}/identity-confirmation`,
+      'POST',
+      { full_name: fullName, email },
+    );
+  },
+
+  /** Claim the assessment for this device. The session token comes back exactly once. */
+  start(quizId: number | string, fingerprint: string): Promise<FormalStarted> {
+    return json(`${V1}/quizzes/${encodeURIComponent(String(quizId))}/formal-attempts`, 'POST', {
+      device: { fingerprint, platform: 'web-test-ui' },
+    });
+  },
+
+  /** An open formal attempt for this learner and quiz, if there is one. */
+  open(quizId: number | string): Promise<{ formal_attempt: FormalAttemptState | null }> {
+    return get(`${V1}/quizzes/${encodeURIComponent(String(quizId))}/formal-attempts/open`);
+  },
+
+  /** The formal attempt's own state. */
+  state(formalAttemptId: string): Promise<FormalAttemptState> {
+    return get(`${V1}/formal-attempts/${encodeURIComponent(formalAttemptId)}`);
+  },
+
+  /** Save answers. Requires the device's session token as well as the learner's. */
+  autosave(
+    formalAttemptId: string,
+    sessionToken: string,
+    answers: { question_id: string; response: unknown }[],
+  ): Promise<unknown> {
+    return request(`${V1}/formal-attempts/${encodeURIComponent(formalAttemptId)}/autosave`, {
+      method: 'POST',
+      headers: headers({
+        'Content-Type': 'application/json',
+        [FORMAL_SESSION_HEADER]: sessionToken,
+      }),
+      body: JSON.stringify({ answers }),
+    });
+  },
+
+  /** Submit deliberately. */
+  submit(formalAttemptId: string, sessionToken: string): Promise<unknown> {
+    return request(`${V1}/formal-attempts/${encodeURIComponent(formalAttemptId)}/submission`, {
+      method: 'POST',
+      headers: headers({
+        'Content-Type': 'application/json',
+        [FORMAL_SESSION_HEADER]: sessionToken,
+      }),
+      body: JSON.stringify({}),
+    });
+  },
+
+  /**
+   * Report that this device dropped out.
+   *
+   * Auto-submits whatever was last autosaved and prevents any resume. Exposed in the demo UI on
+   * purpose: it is the hardest UC-09 behaviour to believe without seeing, and the path that was
+   * broken for every deployment until F-16 was found.
+   */
+  disconnect(formalAttemptId: string, sessionToken: string, reason: string): Promise<unknown> {
+    return request(`${V1}/formal-attempts/${encodeURIComponent(formalAttemptId)}/disconnect`, {
+      method: 'POST',
+      headers: headers({
+        'Content-Type': 'application/json',
+        [FORMAL_SESSION_HEADER]: sessionToken,
+      }),
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  /** Heartbeat, so the platform's session monitor can tell a live device from a lost one. */
+  heartbeat(formalAttemptId: string, sessionToken: string): Promise<unknown> {
+    return request(
+      `${V1}/formal-attempts/${encodeURIComponent(formalAttemptId)}/session/heartbeat`,
+      {
+        method: 'POST',
+        headers: headers({
+          'Content-Type': 'application/json',
+          [FORMAL_SESSION_HEADER]: sessionToken,
+        }),
+        body: JSON.stringify({}),
+      },
+    );
+  },
+};
+
+/**
+ * UC-09's assessor surface. A distinct role: an administrator credential is refused here by design,
+ * because a review exists so that a named person signs off on a learner's result.
+ */
+export const assessor = {
+  pending(): Promise<PendingReviews> {
+    return get(`${API}/assessor/pending-reviews`);
+  },
+
+  review(reviewId: string): Promise<Record<string, unknown>> {
+    return get(`${API}/assessor/reviews/${encodeURIComponent(reviewId)}`);
+  },
+
+  /** Take the review. Recorded, so "who looked at this" stays answerable. */
+  startReview(reviewId: string): Promise<unknown> {
+    return json(`${API}/assessor/reviews/${encodeURIComponent(reviewId)}/review-start`, 'POST', {});
+  },
+
+  decide(
+    reviewId: string,
+    decision: 'APPROVED' | 'REJECTED' | 'REQUIRES_FURTHER_REVIEW',
+    notes: string,
+  ): Promise<unknown> {
+    return json(`${API}/assessor/reviews/${encodeURIComponent(reviewId)}/decision`, 'POST', {
+      decision,
+      notes,
+    });
+  },
+
+  /** Trigger the certificate now that an approval exists. Idempotent; never issues twice. */
+  certificateWorkflow(reviewId: string): Promise<unknown> {
+    return json(
+      `${API}/assessor/reviews/${encodeURIComponent(reviewId)}/certificate-workflow`,
+      'POST',
+      {},
+    );
+  },
+};
+
+// ---------------------------------------------------------------------------
+// UC-10 — Analytics & Reporting
+// ---------------------------------------------------------------------------
+
+const ANALYTICS = `${API}/admin/analytics`;
+
+/**
+ * UC-10: read-only aggregate reporting for an administrator.
+ *
+ * Every figure here is computed by the backend from the rows UC-03, UC-04 and UC-05 wrote. The UI
+ * renders them and never recomputes one — a dashboard that averaged percentages client-side would
+ * be a second scoring implementation, and the two would eventually disagree.
+ *
+ * The CSV exports are plain links rather than fetches, so the browser's own download handling
+ * applies and a large export does not have to fit in memory here.
+ */
+export const analytics = {
+  overall(filters: AnalyticsFilters = {}): Promise<OverallAnalytics> {
+    return get(`${ANALYTICS}/overall${query({ ...filters })}`);
+  },
+
+  questions(
+    filters: AnalyticsFilters & { limit?: number; flagged_only?: boolean } = {},
+  ): Promise<QuestionAnalyticsPage> {
+    return get(`${ANALYTICS}/questions${query({ ...filters })}`);
+  },
+
+  flagged(filters: AnalyticsFilters = {}): Promise<FlaggedQuestions> {
+    return get(`${ANALYTICS}/questions/flagged${query({ ...filters })}`);
+  },
+
+  /** Recompute flags from current data and persist the ones that qualify. */
+  evaluateFlags(filters: AnalyticsFilters = {}): Promise<unknown> {
+    return json(`${ANALYTICS}/questions/flags/evaluate${query({ ...filters })}`, 'POST', {});
+  },
+
+  /** Record what a reviewer did about a flagged question. Append-only. */
+  recordReviewAction(
+    questionId: string,
+    action: ReviewActionType,
+    note: string,
+  ): Promise<unknown> {
+    return json(`${ANALYTICS}/review/actions`, 'POST', {
+      question_id: questionId,
+      action,
+      note,
+    });
+  },
+
+  reviewHistory(questionId: string): Promise<Record<string, unknown>> {
+    return get(`${ANALYTICS}/review/questions/${encodeURIComponent(questionId)}/history`);
+  },
+
+  /** Href for a CSV export, for an anchor rather than a fetch. */
+  exportHref(
+    kind: 'overall' | 'questions' | 'flagged-questions',
+    filters: AnalyticsFilters = {},
+  ): string {
+    return `${ANALYTICS}/exports/${kind}.csv${query({ ...filters })}`;
   },
 };

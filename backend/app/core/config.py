@@ -42,8 +42,16 @@ class Settings(BaseSettings):
     database_echo: bool = Field(default=False)
 
     # ---- HTTP -----------------------------------------------------------
+    #: Interface to bind. Loopback locally, because a development server has no business being
+    #: reachable from the network. A container has the opposite requirement: a platform that routes
+    #: traffic to the container cannot reach a process listening on loopback, and the symptom is
+    #: the worst kind — the container starts, passes its own health check from inside, and answers
+    #: nothing. ``bind_host`` below resolves that from the environment rather than leaving it to
+    #: whoever writes the start command.
     host: str = "127.0.0.1"
-    port: int = 8000
+    #: Port to bind. Read from ``PORT`` as well as ``HOST_PORT``, because every managed platform
+    #: (Railway, Render, Heroku, Fly) injects ``PORT`` and expects the process to honour it.
+    port: int = Field(default=8000)
     # Comma-separated Vite dev-server origins for the admin UI.
     #
     # Kept as a plain string because pydantic-settings JSON-decodes list-typed env vars before
@@ -193,10 +201,35 @@ class Settings(BaseSettings):
     #: allow before anyone turns it on.
     analytics_allow_dangerous_configuration: bool = Field(default=False)
 
-    # ---- Local development convenience ---------------------------------
-    #: Seed a brand new local database so the workflow is demonstrable immediately.
-    #: Always off under ``ENVIRONMENT=test``.
-    auto_seed: bool = Field(default=True)
+    # ---- Review deployments ----------------------------------------------
+    #
+    # A review deployment is a real deployment — public URL, real guards, real database — whose
+    # purpose is for someone to try the system out. That is not the same as production, and it is
+    # not development either, so the two behaviours a reviewer needs are named switches rather
+    # than a side effect of ``ENVIRONMENT``.
+
+    #: Whether ``GET /api/session`` lists the placeholder directory's identities **and their
+    #: tokens**, which is how the demo UI switches between an administrator, a learner and an
+    #: assessor without a login screen.
+    #:
+    #: Off by default, and deliberately independent of ``ENVIRONMENT``. Tying it to
+    #: "environment is development" produced a direct contradiction: the guards are only real when
+    #: ``ENVIRONMENT`` is not development, and the reviewer can only sign in when it is. One of the
+    #: two had to become explicit, and it should be this one — a switch whose entire meaning is
+    #: "this deployment hands out its own credentials" deserves to be set on purpose, be visible in
+    #: the environment, and be absent from a real production deployment.
+    demo_identities: bool = Field(default=False)
+
+    #: Create the demo course, quiz and identities at start-up if the database is empty.
+    #:
+    #: Idempotent, and it never touches a database that already has a quiz — a reviewer's work is
+    #: not overwritten by a redeploy. Under ``ENVIRONMENT=test`` it is ignored outright, so no test
+    #: ever races a bootstrap.
+    auto_seed: bool = Field(default=False)
+
+    #: Directory of the built frontend to serve at ``/``. Set, the API and the UI are one origin and
+    #: CORS stops being part of the deployment at all; unset, the API serves only ``/api``.
+    frontend_dist: str = Field(default="")
 
     @field_validator("admin_api_token", "system_api_token", "coaching_llm_api_key", mode="before")
     @classmethod
@@ -246,6 +279,39 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [item.strip() for item in self.cors_origins_raw.split(",") if item.strip()]
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalise_database_url(cls, value: object) -> object:
+        """Point a bare ``postgresql://`` URL at the driver that is actually installed.
+
+        Managed providers hand out ``postgres://…`` or ``postgresql://…``. SQLAlchemy reads the
+        first form as an unknown dialect and the second as "use psycopg2", which is not a
+        dependency here — so either fails at engine construction with a message about a missing
+        module rather than about the URL. Normalising to ``postgresql+psycopg://`` is the whole of
+        the fix, and doing it here means ``DATABASE_URL`` can be pasted from the provider unchanged.
+
+        A URL that already names a driver is left exactly as given: someone who wrote
+        ``postgresql+psycopg2://`` meant it.
+        """
+        if not isinstance(value, str):
+            return value
+        url = value.strip()
+        if url.startswith("postgres://"):
+            return "postgresql+psycopg://" + url[len("postgres://") :]
+        if url.startswith("postgresql://"):
+            return "postgresql+psycopg://" + url[len("postgresql://") :]
+        return url
+
+    @property
+    def bind_host(self) -> str:
+        """The interface the server should listen on.
+
+        ``0.0.0.0`` outside development, because a container's traffic arrives on an external
+        interface and a process bound to loopback answers none of it. Loopback in development,
+        because a development server should not be reachable from the network.
+        """
+        return self.host if not self.is_production else "0.0.0.0"  # noqa: S104
 
     @property
     def is_sqlite(self) -> bool:

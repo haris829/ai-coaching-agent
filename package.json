@@ -2,7 +2,7 @@
   "name": "courses-quiz-agent",
   "private": true,
   "version": "1.0.0",
-  "description": "Courses Quiz Agent — UC-01 Quiz Configuration & Rules + UC-02 Question Bank Management + UC-03 Quiz Attempt Delivery + UC-04 Answer Validation & Scoring + UC-05 Pass/Fail & Certificate Gating + UC-06 Detailed Feedback Report + UC-07 AI Coaching Review Mode (FastAPI backend + a minimal React test UI)",
+  "description": "Courses Quiz Agent — UC-01 to UC-10 as one system (FastAPI backend + a minimal React test UI), with UC-11 as the cross-cutting integrity layer",
   "type": "module",
   "workspaces": [
     "frontend"
@@ -11,6 +11,7 @@
     "dev": "npm-run-all --parallel dev:api dev:web",
     "dev:api": "node scripts/py.mjs --cwd backend -m uvicorn app.main:app --reload --port 8000",
     "dev:web": "npm run dev --workspace @quiz-agent/frontend",
+    "start": "node scripts/py.mjs --cwd backend -m scripts.start",
     "migrate": "node scripts/py.mjs --cwd backend -m alembic upgrade head",
     "seed": "node scripts/py.mjs --cwd backend -m scripts.seed",
     "test": "npm-run-all test:api test:web",
@@ -20,6 +21,7 @@
     "format": "node scripts/py.mjs --cwd backend -m ruff format app tests scripts",
     "verify:e2e": "node scripts/py.mjs --cwd backend -m scripts.verify_e2e",
     "smoke:ui": "node scripts/py.mjs --cwd backend -m scripts.smoke_ui",
+    "verify:deployment": "node scripts/py.mjs --cwd backend -m scripts.verify_deployment",
     "typecheck": "npm run typecheck --workspace @quiz-agent/frontend",
     "build:web": "npm run build --workspace @quiz-agent/frontend"
   },

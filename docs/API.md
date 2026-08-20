@@ -2,7 +2,7 @@
 
 Base path: **`/api`**. Interactive docs: `/api/docs`. OpenAPI: `/api/openapi.json`.
 
-Seven capabilities share one API, one error envelope and one set of conventions:
+Ten capabilities share one API, one error envelope and one set of conventions:
 
 | Section | Base path | Capability |
 | ------- | --------- | ---------- |
@@ -12,7 +12,26 @@ Seven capabilities share one API, one error envelope and one set of conventions:
 | [Attempt delivery](#attempt-delivery) | `/api/v1` | UC-03 |
 | [Results — scoring, pass/fail and feedback](#results--scoring-passfail-and-feedback) | `/api/v1` | UC-04, UC-05, UC-06 |
 | [AI coaching review mode](#ai-coaching-review-mode) | `/api/v1` | UC-07 |
+| Retakes — learner | `/api/v1/quizzes/{id}/retakes`, `/retake-eligibility`, `/attempt-history` | UC-08 |
+| Retakes — administrator grants | `/api/admin/retakes` | UC-08 |
+| Formal assessment — learner | `/api/v1/quizzes/{id}/formal-*`, `/api/v1/formal-attempts` | UC-09 |
+| Formal assessment — assessor | `/api/assessor` | UC-09 |
+| Formal assessment — platform-internal | `/api/system/formal-assessments` | UC-09 |
+| Analytics and reporting | `/api/admin/analytics` | UC-10 |
 | [Shared](#shared) | `/api` | all of them |
+
+**Three audiences, three roots.** `/api/v1` is the learner's; `/api/admin` and `/api/question-bank`
+are an administrator's; `/api/assessor` is an assessor's; and `/api/system` is for platform-internal
+callers with no human behind them. They are separate because the credentials are: an administrator
+is deliberately *refused* on `/api/assessor` (a review exists so a named person signs off), and an
+assessor is refused on `/api/system`. The full matrix is asserted over the generated OpenAPI
+document by `tests/global_dod/test_api_authorization.py`, so a route added tomorrow is covered the
+day it ships.
+
+**Serialisation differs by capability, and the boundary is deliberate.** UC-01 to UC-07 serialise in
+`camelCase`; UC-08, UC-09 and UC-10 in `snake_case`. Renaming either to match would mean rewriting a
+published contract or hiding the difference behind a translation layer that the next person reading a
+network trace would have to undo. The seam is documented instead.
 
 The learner-facing routes are **versioned** (`/api/v1`) because they are the contract a client
 application depends on; the administrative ones are internal. UC-04 through UC-07 share that prefix

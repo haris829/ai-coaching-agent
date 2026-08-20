@@ -16,7 +16,13 @@ const STORAGE_KEY = 'quiz-agent.token';
 export interface SessionUser {
   id: number;
   displayName: string;
-  role: 'admin' | 'learner';
+  /**
+   * Three roles, not two. `assessor` arrived with UC-09 and is genuinely distinct: an
+   * administrator credential is *refused* on the assessor endpoints, because a human review exists
+   * so that a named person signs off on a learner's result. Treating it as a flavour of admin here
+   * would misrepresent what the backend enforces.
+   */
+  role: 'admin' | 'learner' | 'assessor';
 }
 
 export interface SessionIdentity extends SessionUser {

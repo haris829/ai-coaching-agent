@@ -504,6 +504,28 @@ class SqlAlchemyFormalAttemptRepository:
             raise PersistenceFailedError("formal_attempts.list_for_learner", exc) from exc
         return tuple(to_domain_attempt(row) for row in rows)
 
+    def _existing_open_attempt_id(self, formal_attempt: FormalAttempt) -> str | None:
+        """The formal attempt already occupying this learner-and-quiz slot, if one can be found.
+
+        Diagnostic only, read after the rollback. A caller told "a formal assessment already exists"
+        needs to know *which*, and looking it up before the insert would be a check the unique index
+        exists to make unnecessary. A failure to identify it must not turn a clear conflict into a
+        database error, so this returns ``None`` rather than raising.
+        """
+        try:
+            return self._session.scalar(
+                select(FormalAttemptRow.id)
+                .where(
+                    FormalAttemptRow.learner_id == formal_attempt.learner_id,
+                    FormalAttemptRow.quiz_id == formal_attempt.quiz_id,
+                    FormalAttemptRow.id != formal_attempt.formal_attempt_id,
+                )
+                .order_by(FormalAttemptRow.created_at.desc())
+                .limit(1)
+            )
+        except SQLAlchemyError:
+            return None
+
     def _insert(self, formal_attempt: FormalAttempt) -> FormalAttempt:
         row = FormalAttemptRow(
             id=formal_attempt.formal_attempt_id,
@@ -520,7 +542,9 @@ class SqlAlchemyFormalAttemptRepository:
         except IntegrityError as exc:
             self._session.rollback()
             raise DuplicateFormalAttemptError(
-                formal_attempt.learner_id, formal_attempt.quiz_id
+                learner_id=formal_attempt.learner_id,
+                quiz_id=formal_attempt.quiz_id,
+                existing_id=self._existing_open_attempt_id(formal_attempt),
             ) from exc
         except SQLAlchemyError as exc:
             self._session.rollback()
@@ -542,7 +566,9 @@ class SqlAlchemyFormalAttemptRepository:
             self._session.rollback()
             # The open-attempt or upstream-attempt index refused the new state.
             raise DuplicateFormalAttemptError(
-                formal_attempt.learner_id, formal_attempt.quiz_id
+                learner_id=formal_attempt.learner_id,
+                quiz_id=formal_attempt.quiz_id,
+                existing_id=self._existing_open_attempt_id(formal_attempt),
             ) from exc
         except SQLAlchemyError as exc:
             self._session.rollback()
@@ -652,6 +678,25 @@ class SqlAlchemyDeviceSessionRepository:
             raise PersistenceFailedError("device_sessions.list_for_attempt", exc) from exc
         return tuple(_to_session(row) for row in rows)
 
+    def _active_session_id(self, formal_attempt_id: str) -> str | None:
+        """The session currently holding the lock, for a refusal that can name it.
+
+        Read after the rollback rather than before the insert: reading first would be a check that
+        another request can invalidate between the read and the write, which is exactly what the
+        unique index exists to make unnecessary. The insert decides; this only explains.
+        """
+        try:
+            return self._session.scalar(
+                select(DeviceSessionRow.id).where(
+                    DeviceSessionRow.formal_attempt_id == formal_attempt_id,
+                    DeviceSessionRow.state == DeviceSessionState.ACTIVE.value,
+                )
+            )
+        except SQLAlchemyError:
+            # Diagnostic only. Failing to name the holder must not replace a clear conflict with a
+            # database error — the caller still needs to be told it lost the lock.
+            return None
+
     def _claim(self, session: DeviceSession) -> DeviceSession:
         """Take the single-device lock by inserting. The insert *is* the check."""
         row = _session_row(session)
@@ -660,7 +705,10 @@ class SqlAlchemyDeviceSessionRepository:
             self._session.commit()
         except IntegrityError as exc:
             self._session.rollback()
-            raise DeviceSessionAlreadyHeldError(session.formal_attempt_id) from exc
+            raise DeviceSessionAlreadyHeldError(
+                formal_attempt_id=session.formal_attempt_id,
+                active_session_id=self._active_session_id(session.formal_attempt_id),
+            ) from exc
         except SQLAlchemyError as exc:
             self._session.rollback()
             raise PersistenceFailedError("device_sessions.claim", exc) from exc
@@ -708,7 +756,10 @@ class SqlAlchemyDeviceSessionRepository:
             )
         except IntegrityError as exc:
             self._session.rollback()
-            raise DeviceSessionAlreadyHeldError(session.formal_attempt_id) from exc
+            raise DeviceSessionAlreadyHeldError(
+                formal_attempt_id=session.formal_attempt_id,
+                active_session_id=self._active_session_id(session.formal_attempt_id),
+            ) from exc
         except SQLAlchemyError as exc:
             self._session.rollback()
             raise PersistenceFailedError("device_sessions.save", exc) from exc
@@ -789,6 +840,17 @@ class SqlAlchemyFormalReviewRepository:
             raise PersistenceFailedError("formal_reviews.get_by_formal_attempt", exc) from exc
         return _to_review(row) if row else None
 
+    def _existing_review_id(self, formal_attempt_id: str) -> str | None:
+        """The review that already exists for this formal attempt. Diagnostic only; see above."""
+        try:
+            return self._session.scalar(
+                select(FormalReviewRow.id).where(
+                    FormalReviewRow.formal_attempt_id == formal_attempt_id
+                )
+            )
+        except SQLAlchemyError:
+            return None
+
     def _insert(self, review: FormalReview) -> FormalReview:
         row = FormalReviewRow(
             id=review.review_id,
@@ -805,7 +867,10 @@ class SqlAlchemyFormalReviewRepository:
             self._session.commit()
         except IntegrityError as exc:
             self._session.rollback()
-            raise DuplicateReviewError(review.formal_attempt_id) from exc
+            raise DuplicateReviewError(
+                formal_attempt_id=review.formal_attempt_id,
+                existing_review_id=self._existing_review_id(review.formal_attempt_id),
+            ) from exc
         except SQLAlchemyError as exc:
             self._session.rollback()
             raise PersistenceFailedError("formal_reviews.insert", exc) from exc

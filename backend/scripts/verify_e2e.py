@@ -8,7 +8,25 @@ with a separate connection to confirm the data is genuinely on disk rather than 
 Sections 1–15 cover UC-02 (question bank). Sections 16–19 cover UC-01 (quiz configuration and
 rules). Sections 20–24 cover UC-03 (attempt delivery) and the integration of all three: bank counts →
 configuration → validation → immutable version → eligibility → attempt locked to a version → answer →
-autosave → review → confirmed submission → historical report.
+autosave → review → confirmed submission → historical report. Sections 25–29 continue into UC-04
+(scoring), UC-05 (pass/fail and certificate gating), UC-06 (feedback) and UC-07 (coaching).
+
+Sections 30–34 were added for the deployment review, and they exist because of what their absence
+cost. UC-08, UC-09 and UC-10 had no live-server coverage at all: their tests drive UC-03 through
+port fakes, and a fake has no CHECK constraints, no triggers and no migrated schema. Three defects
+found late in UC-11 — a constraint that rejected every disconnect submission, an error class that
+raised ``TypeError`` on every provider outage, and an immutability trigger missing from every
+migrated database — were all in that blind spot. Treating those three capabilities as verified on
+in-process tests would repeat exactly the mistake that produced them. So:
+
+* **30** UC-08 retakes — fail, retake on a fresh paper, exhaust the allowance, be granted one more.
+* **31** UC-09 formal assessment — conditions, identity, device session, disconnect auto-submit,
+  the coaching restriction, and a certificate that waits for a named assessor.
+* **32** UC-10 analytics — dashboard figures against the rows the chain actually wrote, filters,
+  CSV export, the empty state, and the review-flag workflow.
+* **33** Authorization over real HTTP with the administrator guard switched **on**, which is the
+  posture a deployment runs in and no other check here uses.
+* **34** Database integrity on the migrated database: the constraints, not the services.
 
     python -m scripts.verify_e2e
 """
@@ -28,6 +46,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from scripts import e2e_deployment_sections as deployment_sections  # noqa: E402
 
 
 @contextmanager
@@ -72,6 +96,12 @@ V1 = f"{BASE}/api/v1"
 #: company system will own these rows, which is exactly why they are set up out-of-band here.
 ADMIN_TOKEN = "e2e-admin-token"
 LEARNER_TOKEN = "e2e-learner-token"
+#: A second learner, so "another learner cannot read this" is a real assertion rather than a
+#: variation on "an anonymous caller cannot".
+LEARNER2_TOKEN = "e2e-learner2-token"
+#: UC-09's third role. An administrator credential is deliberately refused for an assessor's
+#: actions, so without this identity the review-and-approve workflow cannot be reached at all.
+ASSESSOR_TOKEN = "e2e-assessor-token"
 
 failures: list[str] = []
 checks = 0
@@ -95,12 +125,22 @@ def call(
     raw: bytes | None = None,
     content_type: str | None = None,
     token: str | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, Any]:
+    """One HTTP call. ``extra_headers`` carries UC-09's ``X-Formal-Session``.
+
+    A formal assessment's device session is proved by a header, not by the bearer token: the token
+    says who the learner is, and the session token says which device is entitled to write. Both are
+    needed, which is exactly the distinction section 31 exercises when it retries an autosave with
+    a forged session.
+    """
     url = path if path.startswith("http") else f"{API}{path}"
     data: bytes | None = None
     headers = {"X-Admin-User": "verify-script"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    if extra_headers:
+        headers.update(extra_headers)
 
     if raw is not None:
         data = raw
@@ -227,14 +267,22 @@ DRAG_TO_ORDER,"Order these steps",,"A:First|B:Second|C:Third",,A|B,"Explanation.
 """
 
 
-def seed_platform_rows(path: Path) -> None:
-    """Insert the identities, course and quiz UC-01 needs.
+def seed_platform_rows(path: Path) -> dict[str, Any]:
+    """Insert the identities, course and quizzes UC-01 needs. Returns the ids for later sections.
 
     Written with raw SQL on purpose: these are the rows the company's own systems will own, so
     there is no API that creates them. Everything the verification actually exercises goes over
     HTTP.
+
+    Four identities and three quizzes, because the later sections need what the earlier ones did
+    not. A second learner makes "another learner cannot read this" a real check. An assessor is a
+    distinct role UC-09 requires and refuses an administrator for. And the retake and formal
+    journeys get their **own** quizzes so their attempt counts and locked versions are unaffected by
+    whatever sections 20–29 did to the first one — a journey whose starting state depends on an
+    earlier journey is a journey that fails for reasons unrelated to what it is testing.
     """
     now = "2026-01-01 00:00:00"
+    ids: dict[str, Any] = {}
     with readonly_db(path) as conn:
         conn.executemany(
             "INSERT INTO qa_users (email, display_name, role, api_token, created_at) "
@@ -242,6 +290,8 @@ def seed_platform_rows(path: Path) -> None:
             [
                 ("e2e-admin@example.com", "E2E Admin", "admin", ADMIN_TOKEN, now),
                 ("e2e-learner@example.com", "E2E Learner", "learner", LEARNER_TOKEN, now),
+                ("e2e-learner2@example.com", "E2E Learner Two", "learner", LEARNER2_TOKEN, now),
+                ("e2e-assessor@example.com", "E2E Assessor", "assessor", ASSESSOR_TOKEN, now),
             ],
         )
         conn.execute(
@@ -249,23 +299,41 @@ def seed_platform_rows(path: Path) -> None:
             ("E2E-101", "End-to-end Course", now, now),
         )
         course_id = conn.execute("SELECT id FROM qc_courses WHERE code = 'E2E-101'").fetchone()[0]
-        conn.execute(
-            "INSERT INTO qc_quizzes (course_id, slug, title, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (course_id, "e2e-quiz", "End-to-end Quiz", now, now),
-        )
+        ids["course_id"] = course_id
+
+        for slug, title in (
+            ("e2e-quiz", "End-to-end Quiz"),
+            ("e2e-retake-quiz", "End-to-end Retake Quiz"),
+            ("e2e-formal-quiz", "End-to-end Supervised Examination"),
+        ):
+            conn.execute(
+                "INSERT INTO qc_quizzes (course_id, slug, title, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (course_id, slug, title, now, now),
+            )
+            ids[slug] = conn.execute(
+                "SELECT id FROM qc_quizzes WHERE course_id = ? AND slug = ?", (course_id, slug)
+            ).fetchone()[0]
+
         # UC-03 refuses to create an attempt for a learner who is not enrolled on the course, so
         # without this the seeded world would look configured but be unusable. The enrolment is
-        # keyed by string because UC-03 treats both ids as opaque.
-        learner_id = conn.execute(
-            "SELECT id FROM qa_users WHERE email = 'e2e-learner@example.com'"
-        ).fetchone()[0]
-        conn.execute(
-            "INSERT INTO qa_enrolments (learner_id, course_id, status, enrolled_at) "
-            "VALUES (?, ?, ?, ?)",
-            (str(learner_id), str(course_id), "ACTIVE", now),
-        )
+        # keyed by string because UC-03 treats both ids as opaque. A cohort is set on each so
+        # UC-10's cohort filter has real data to filter rather than agreeing with itself.
+        for email, cohort in (
+            ("e2e-learner@example.com", "cohort-a"),
+            ("e2e-learner2@example.com", "cohort-b"),
+        ):
+            learner_id = conn.execute(
+                "SELECT id FROM qa_users WHERE email = ?", (email,)
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO qa_enrolments (learner_id, course_id, cohort_id, status, enrolled_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (str(learner_id), str(course_id), cohort, "ACTIVE", now),
+            )
+            ids[email] = learner_id
         conn.commit()
+    return ids
 
 
 def main() -> int:
@@ -283,7 +351,7 @@ def main() -> int:
         }
     )
 
-    print("COURSES QUIZ AGENT - END-TO-END VERIFICATION (UC-01 ... UC-07)")
+    print("COURSES QUIZ AGENT - END-TO-END VERIFICATION (UC-01 ... UC-10 + integrity)")
     print("=" * 60)
     print(f"database : {db_path}")
 
@@ -331,6 +399,19 @@ def main() -> int:
         "qk_coaching_messages",
         "qk_knowledge_gaps",
         "qk_coaching_activity",
+        # UC-08's own tables. Its retake requests and administrator grants are the rows that make a
+        # retake auditable rather than merely possible.
+        "qt_retake_requests",
+        "qt_additional_attempt_grants",
+        # UC-09's. The device session is what makes a supervised sitting single-device, and the
+        # review is what holds a certificate back until a named assessor decides.
+        "qs_formal_attempts",
+        "qs_formal_device_sessions",
+        "qs_formal_reviews",
+        # UC-10's two: the flag a poorly-answered question earns, and the append-only record of
+        # what a reviewer did about it.
+        "qy_question_flags",
+        "qy_review_actions",
     ):
         check(f"table {table} exists", table in tables)
 
@@ -348,12 +429,27 @@ def main() -> int:
         # against a genuinely migrated database can catch that.
         "trg_qk_message_no_update",
         "trg_qk_activity_no_update",
+        # UC-04's, UC-05's and UC-06's immutability, and UC-10's append-only review trail. All four
+        # are checked here rather than only in pytest for the same reason as the two above: pytest
+        # builds its schema from the models, so a trigger the *migration* fails to install is
+        # invisible there. That is not hypothetical — F-18 was exactly this, and only this script
+        # saw it.
+        "trg_qr_result_immutable_when_scored",
+        "trg_qr_question_score_no_update",
+        "trg_qg_outcome_no_update",
+        "trg_qf_report_immutable_when_generated",
+        "trg_qf_item_no_update",
+        "trg_qy_review_action_no_update",
     ):
         # The migration must ship the integrity triggers, not only `create_all`.
         check(f"trigger {trigger} exists", trigger in triggers)
 
-    seed_platform_rows(db_path)
-    check("platform rows (identities, course, quiz) inserted", True)
+    platform = seed_platform_rows(db_path)
+    check(
+        "platform rows (4 identities, course, 3 quizzes, 2 enrolments) inserted",
+        {"course_id", "e2e-quiz", "e2e-retake-quiz", "e2e-formal-quiz"} <= set(platform),
+        str(sorted(platform)),
+    )
 
     # Server output goes to a file rather than a pipe: an unread pipe fills up and blocks the
     # server mid-run, which is very hard to diagnose.
@@ -1597,6 +1693,31 @@ def main() -> int:
             "no stack trace in the response",
             "Traceback" not in json.dumps(not_found) and ".py" not in json.dumps(not_found),
         )
+
+        # Sections 30-34: UC-08, UC-09, UC-10, the deployed authorization posture, and database
+        # integrity. In their own module because this one was already long enough; see
+        # scripts/e2e_deployment_sections.py for why they were added and what each one is for.
+        harness = deployment_sections.Harness(
+            check=check,
+            call=call,
+            section=section,
+            readonly_db=readonly_db,
+            db_path=db_path,
+            base=BASE,
+            admin_token=ADMIN_TOKEN,
+            learner_token=LEARNER_TOKEN,
+            learner2_token=LEARNER2_TOKEN,
+            assessor_token=ASSESSOR_TOKEN,
+            platform=platform,
+            tmp=tmp,
+            env=env,
+            backend_dir=BACKEND_DIR,
+        )
+        deployment_sections.section_30_retakes(harness)
+        deployment_sections.section_31_formal(harness)
+        deployment_sections.section_32_analytics(harness)
+        deployment_sections.section_33_authorization(harness)
+        deployment_sections.section_34_integrity(harness)
 
     except Exception:
         import traceback

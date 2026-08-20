@@ -1,7 +1,8 @@
 # Integration notes
 
-Seven capabilities: three built separately and merged, then four built onto the seams that merge
-left behind. This document is about those seams — where they are, why each is shaped the way it is,
+Ten capabilities: three built separately and merged, then four built onto the seams that merge
+left behind, then three more (UC-08, UC-09, UC-10) onto the seams *those* left — plus UC-11, which
+builds nothing and validates all ten. This document is about those seams — where they are, why each is shaped the way it is,
 and what changes when the company's own systems replace the placeholders.
 
 1. [Ownership](#1-ownership--who-owns-what) — the map

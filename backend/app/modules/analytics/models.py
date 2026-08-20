@@ -169,11 +169,16 @@ class ReviewActionRow(Base):
 # stops UC-10 deleting an audit row is that no method exists to do it — the protocol declares none
 # and the repository implements none — which is the same way UC-08 protects its grants.
 
+# The ``IMMUTABLE_`` prefix is the convention every other immutability trigger in this system
+# follows (``IMMUTABLE_CONFIGURATION_VERSION``, ``IMMUTABLE_ATTEMPT_RESULT``, and six more). It is
+# what lets a caller reading a raw database error tell an immutability refusal from a missing column
+# or a broken connection, without matching on prose. UC-10 was integrated last and had drifted from
+# it; the wording is aligned here so all eleven triggers are recognisable the same way.
 _SQLITE_ACTION_TRIGGER = f"""
 CREATE TRIGGER IF NOT EXISTS trg_{TABLE_PREFIX}review_action_no_update
 BEFORE UPDATE ON {TABLE_PREFIX}review_actions
 BEGIN
-    SELECT RAISE(ABORT, 'review actions are append-only');
+    SELECT RAISE(ABORT, 'IMMUTABLE_REVIEW_ACTION: review actions are append-only');
 END
 """
 
@@ -181,7 +186,7 @@ _POSTGRES_ACTION_FUNCTION = f"""
 CREATE OR REPLACE FUNCTION fn_reject_{TABLE_PREFIX}review_action_change()
 RETURNS trigger AS $$
 BEGIN
-    RAISE EXCEPTION 'review actions are append-only';
+    RAISE EXCEPTION 'IMMUTABLE_REVIEW_ACTION: review actions are append-only';
 END;
 $$ LANGUAGE plpgsql
 """

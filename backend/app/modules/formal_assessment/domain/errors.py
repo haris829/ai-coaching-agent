@@ -560,13 +560,33 @@ class ConcurrentModificationError(ConflictError):
     Raised by a repository whose compare-and-set failed. Services catch it, re-read and either
     replay the winner's outcome or refuse — they never retry blindly, because a blind retry is how
     one operation becomes two.
+
+    ``record`` and ``identifier`` are positional because every call site is a repository reporting
+    "this row, this id", and the two versions are optional because they are the diagnosis: knowing a
+    write was made against version 3 of a record now at version 5 is what distinguishes a genuine
+    race from a caller holding a stale object. Every repository already tried to supply them; the
+    signature that omitted them turned each of those calls into a ``TypeError``, and the compare-
+    and-set failure a service was ready to handle arrived as an unhandled 500 instead. See
+    docs/UC11-FINDINGS.md F-19.
     """
 
-    def __init__(self, *, record: str, identifier: str) -> None:
+    def __init__(
+        self,
+        record: str,
+        identifier: str,
+        *,
+        expected_version: int | None = None,
+        actual_version: int | None = None,
+    ) -> None:
         super().__init__(
             "The record was modified by another request. Re-read it and try again.",
             code="CONCURRENT_MODIFICATION",
-            context={"record": record, "identifier": identifier},
+            context={
+                "record": record,
+                "identifier": identifier,
+                "expected_version": expected_version,
+                "actual_version": actual_version,
+            },
             retryable=True,
         )
 

@@ -2,7 +2,7 @@
   "name": "@quiz-agent/frontend",
   "private": true,
   "version": "1.0.0",
-  "description": "Minimal test UI for the Courses Quiz Agent backend (UC-01 … UC-07)",
+  "description": "Minimal test UI for the Courses Quiz Agent backend (UC-01 to UC-10)",
   "type": "module",
   "scripts": {
     "dev": "vite",

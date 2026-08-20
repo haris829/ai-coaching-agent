@@ -1,0 +1,33 @@
+# Keep the build context small and keep local state out of the image.
+#
+# The exclusions here are not only about size. `backend/*.db` matters for correctness: a local
+# SQLite file copied into the image would be the database a deployment starts from, so a reviewer
+# would see a developer's leftover attempts and results as though they were real.
+
+node_modules
+**/node_modules
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+frontend/dist
+dist
+coverage
+
+# Local database files. Never in an image.
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+backend/data
+
+# Secrets and machine-local configuration. Deployment values come from the platform's environment.
+.env
+.env.local
+backend/.env
+
+.git
+.gitignore
+*.log
+.DS_Store
+**/*.code-workspace

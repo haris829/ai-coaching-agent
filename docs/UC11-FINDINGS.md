@@ -158,3 +158,65 @@ repairs a database that already ran it. And `tests/test_schema_migration.py` now
 table's **triggers** alongside its columns and constraints, so the next batch rebuild that drops one
 fails in the fast suite rather than in the live gate — with a companion test asserting the
 comparison is not silently comparing empty lists.
+
+---
+
+## Defects found during the deployment audit
+
+Two more, both found by driving UC-08, UC-09 and UC-10 over real HTTP against a migrated database
+for the first time — the gap recorded as A1 in
+[DEPLOYMENT-AUDIT.md](DEPLOYMENT-AUDIT.md). Both are the same shape as F-17, which is why the third
+entry below is a permanent gate rather than another fix.
+
+### F-19 — eight raise sites in UC-09's persistence layer could not be constructed (critical)
+
+Every uniqueness and concurrency path in `formal_assessment/repositories/sqlalchemy.py` called its
+error class with arguments the class did not declare, so each raised **`TypeError`** instead:
+
+| Error | Sites | What it guards |
+|---|---|---|
+| `ConcurrentModificationError` | 3 | the compare-and-set on formal attempts, device sessions and reviews |
+| `DuplicateFormalAttemptError` | 2 | one formal attempt per learner and quiz |
+| `DeviceSessionAlreadyHeldError` | 2 | **the single-device lock** |
+| `DuplicateReviewError` | 1 | one review per formal attempt |
+
+The guarantees themselves held — the database refused every duplicate — but the *refusal* was an
+opaque 500 with the real cause discarded. Concretely: a learner opening a supervised examination in a
+second browser saw "an unexpected internal error occurred", and
+`DeviceSessionService.register` — which is written to catch `DeviceSessionAlreadyHeldError`, record
+the rejected device as evidence, and raise a message naming the learner's other device — never ran
+at all. The same applies to `handle_disconnect`, whose duplicate-disconnect idempotency depends on
+catching `ConcurrentModificationError`: under a genuine race that `except` block was unreachable.
+
+Invisible to UC-09's suite because its repositories are in-memory doubles that detect a conflict
+with a Python check rather than a unique index, so the `IntegrityError` branch is never taken.
+
+*Fixed:* `ConcurrentModificationError` now accepts the two versions every caller was already trying
+to pass — an expected-3-actual-5 is the diagnosis, and dropping it lost real information. The other
+five call sites now pass the keywords their classes declare, and supply the context the service on
+the other side reads: which session holds the lock, which attempt already occupies the slot.
+
+### F-20 — UC-10's immutability trigger did not follow the convention (low)
+
+Ten of the eleven immutability triggers raise a message prefixed `IMMUTABLE_<THING>:`, which is what
+lets a caller reading a raw database error distinguish an immutability refusal from a missing column
+or a broken connection without matching on prose. `trg_qy_review_action_no_update` said only
+"review actions are append-only". UC-10 was integrated last and had drifted.
+
+Not a hole in the guarantee — the trigger works — but it defeats the recognition the convention
+exists for, and it was found by a check that could not assert the refusal was the *right* refusal.
+
+*Fixed:* aligned to `IMMUTABLE_REVIEW_ACTION:`. The migration reads its trigger SQL from the models
+module, so a fresh migration produces the new wording.
+
+### The gate that stops this recurring
+
+Three defects (F-17, F-19, and the device-lock case that surfaced F-19) were all "this `raise` cannot
+be constructed". None was visible to any test, for a structural reason: they are on **error paths**,
+reached only when a constraint fires or a dependency is down, and the doubles used by the unit suites
+have neither constraints nor outages.
+
+`tests/test_error_signatures.py` now binds every `raise SomeError(...)` in `app/` against that
+class's `__init__` — 292 sites — and fails on any mismatch. It would have caught all three on the
+commit that introduced them, and it carries a companion test proving the binding check still rejects
+what it is supposed to reject.

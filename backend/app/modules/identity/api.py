@@ -35,9 +35,21 @@ def session_info(db: DbSession, principal: OptionalPrincipal) -> dict[str, Any]:
         )
     }
 
-    # Tokens are development credentials for the placeholder directory. Never expose them once a
-    # real identity provider is in place, and never outside a development environment.
-    if settings.environment.lower() in {"development", "test"}:
+    # Tokens are credentials for the placeholder directory, so listing them is a decision, not a
+    # detail. Two situations want it and they are not the same situation:
+    #
+    # * local development and the test suite, where there is nothing to protect;
+    # * a **review deployment** — public URL, real guards, real database — whose entire purpose is
+    #   for someone to try the system out, and who therefore has to be handed a way in.
+    #
+    # The second is why `DEMO_IDENTITIES` exists rather than this being a check on `ENVIRONMENT`
+    # alone. A deployed environment must set `ADMIN_API_TOKEN` to have working guards at all
+    # (`Settings._require_credentials_outside_development`), which puts it outside the development
+    # safe-list — and a reviewer would then face an API with no way to authenticate to it. Making
+    # the switch explicit resolves that without weakening anything: real production leaves
+    # `DEMO_IDENTITIES` unset, the list disappears, and the only way in is a credential the
+    # operator issued.
+    if settings.demo_identities or settings.environment.lower() in {"development", "test"}:
         body["users"] = [
             {
                 "id": user.id,

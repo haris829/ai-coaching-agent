@@ -3,13 +3,16 @@ import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 
 import { IdentitySwitcher } from './components/IdentitySwitcher';
 import { ToastProvider } from './components/ui';
+import { AnalyticsPage } from './pages/AnalyticsPage';
 import { AttemptPage } from './pages/AttemptPage';
 import { AttemptReportPage } from './pages/AttemptReportPage';
+import { FormalAssessmentPage } from './pages/FormalAssessmentPage';
 import { ImportPage } from './pages/ImportPage';
 import { LearnerRulesPage } from './pages/LearnerRulesPage';
 import { QuestionFormPage } from './pages/QuestionFormPage';
 import { QuestionListPage } from './pages/QuestionListPage';
 import { QuizConfigurationPage } from './pages/QuizConfigurationPage';
+import { RetakePage } from './pages/RetakePage';
 import { TopicsPage } from './pages/TopicsPage';
 
 /**
@@ -17,12 +20,17 @@ import { TopicsPage } from './pages/TopicsPage';
  *
  * This is a **development and manual-verification surface**, not a production frontend: it exists so
  * the whole workflow can be exercised in a browser — configure a quiz, watch versions accumulate,
- * author and retire questions, import a CSV, read the learner rules, then sit the quiz itself and
- * watch it save, expire and submit. The backend is the product; every rule it enforces is enforced
- * there, not here.
+ * author and retire questions, import a CSV, read the learner rules, sit the quiz and watch it save
+ * and submit, retake it, sit a supervised examination, and read the administrator's dashboard. The
+ * backend is the product; every rule it enforces is enforced there, not here.
  *
- * The navigation follows the three capabilities: configuration and rules are UC-01, questions/topics/
- * import/reports are UC-02, and "Take a quiz" is UC-03.
+ * The navigation follows the capabilities: configuration and rules are UC-01; questions, topics,
+ * import and reports are UC-02; "Take a quiz" is UC-03 and its result chain is UC-04 to UC-07;
+ * "Retakes" is UC-08; "Formal assessment" is UC-09 (and the assessor's review queue, which appears
+ * on that screen when the assessor identity is selected); "Analytics" is UC-10.
+ *
+ * Screens are not access control. Role-specific panels are hidden as a courtesy — every endpoint
+ * behind them enforces the role itself and refuses the wrong credential with 403.
  */
 export function App(): ReactNode {
   return (
@@ -54,6 +62,15 @@ export function App(): ReactNode {
             <NavLink to="/reports" className={({ isActive }) => (isActive ? 'active' : '')}>
               Attempt reports
             </NavLink>
+            <NavLink to="/retakes" className={({ isActive }) => (isActive ? 'active' : '')}>
+              Retakes
+            </NavLink>
+            <NavLink to="/formal" className={({ isActive }) => (isActive ? 'active' : '')}>
+              Formal assessment
+            </NavLink>
+            <NavLink to="/analytics" className={({ isActive }) => (isActive ? 'active' : '')}>
+              Analytics
+            </NavLink>
           </nav>
           <IdentitySwitcher />
         </header>
@@ -76,6 +93,15 @@ export function App(): ReactNode {
           {/* UC-03 — Quiz Attempt Delivery */}
           <Route path="/attempt" element={<AttemptPage />} />
           <Route path="/reports/:attemptRef" element={<AttemptReportPage />} />
+
+          {/* UC-08 — Retake Management (eligibility, attempt history, administrator grants) */}
+          <Route path="/retakes" element={<RetakePage />} />
+
+          {/* UC-09 — Formal Assessment Mode, and the assessor's review queue */}
+          <Route path="/formal" element={<FormalAssessmentPage />} />
+
+          {/* UC-10 — Analytics & Reporting */}
+          <Route path="/analytics" element={<AnalyticsPage />} />
 
           <Route
             path="*"
