@@ -26,3 +26,7 @@ backend/.env
 # drops .js/.d.ts files next to their sources, where Vite may resolve them ahead of the .tsx.
 frontend/src/**/*.js
 frontend/src/**/*.d.ts
+
+# Railway CLI's local project link. Machine-specific — the project is created by
+# scripts/deploy-railway.mjs, not by committing a link to somebody else's.
+.railway/

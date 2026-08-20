@@ -3,20 +3,27 @@
  * Deploy the Courses Quiz Agent to Railway, end to end, and verify the result.
  *
  *     node scripts/deploy-railway.mjs                 # create everything and deploy
- *     node scripts/deploy-railway.mjs --skip-create   # redeploy an already-linked project
+ *     node scripts/deploy-railway.mjs --skip-create   # redeploy into the existing project
  *
  * Requires `railway login` to have been completed (or `RAILWAY_API_TOKEN` in the environment).
- * Everything else — project, PostgreSQL, variables, secrets, domain — this does.
+ * Everything else — project, PostgreSQL, the application service, variables, secrets, domain — this
+ * does.
  *
  * WHY A SCRIPT RATHER THAN A LIST OF COMMANDS IN A DOCUMENT
  * --------------------------------------------------------
- * The order matters and two of the steps are easy to get wrong in ways that fail late:
+ * Three things have to be right and each fails in a way that points somewhere else:
  *
+ *   * **The application needs its own service.** `railway add --database postgres` creates the
+ *     database *and links it as the active service*, so a bare `railway up` afterwards deploys the
+ *     application **into the Postgres service** — replacing its image, inheriting its healthcheck,
+ *     and leaving one service that is neither a database nor an app. That happened on the first
+ *     real run of this script. Every command below therefore names `--service` explicitly rather
+ *     than trusting whatever is linked.
  *   * **PostgreSQL must exist before the app first boots**, because the app migrates on start. Boot
  *     it first and you get a healthy container and a 500 from every endpoint that touches a table.
  *   * **The guard tokens must be set before the first deploy**, because `Settings` refuses to start
  *     a non-development environment without them. That refusal is deliberate — but on Railway it
- *     looks like a crash loop, and the reason is in the logs rather than in front of you.
+ *     looks like a crash loop with the reason buried in the logs.
  *
  * Generating the secrets here also means they are never typed, never pasted, and never committed.
  */
@@ -25,6 +32,10 @@ import { execFileSync, execSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 
 const PROJECT_NAME = process.env.RAILWAY_PROJECT_NAME ?? 'courses-quiz-agent';
+/** The application service. Named, because every command has to be able to point at it. */
+const APP_SERVICE = process.env.RAILWAY_APP_SERVICE ?? 'quiz-agent';
+/** Railway's own name for the database service it creates, used in the variable reference below. */
+const DB_SERVICE = process.env.RAILWAY_DB_SERVICE ?? 'Postgres';
 
 /** A token nobody has to invent, remember, or accidentally commit. */
 function secret(label) {
@@ -32,8 +43,7 @@ function secret(label) {
 }
 
 function run(command, args, { capture = false, allowFail = false } = {}) {
-  const printable = `${command} ${args.join(' ')}`;
-  console.log(`\n$ ${printable}`);
+  console.log(`\n$ ${command} ${args.join(' ')}`);
   try {
     const output = execFileSync(command, args, {
       encoding: 'utf8',
@@ -45,16 +55,14 @@ function run(command, args, { capture = false, allowFail = false } = {}) {
     return output ?? '';
   } catch (error) {
     if (allowFail) {
-      console.log(`  (non-fatal) ${printable} failed: ${error.message.split('\n')[0]}`);
+      console.log(`  (non-fatal) failed: ${String(error.message).split('\n')[0]}`);
       return '';
     }
     throw error;
   }
 }
 
-function railway(args, options) {
-  return run('railway', args, options);
-}
+const railway = (args, options) => run('railway', args, options);
 
 // ---------------------------------------------------------------------------
 // 0. Preconditions
@@ -68,8 +76,9 @@ try {
 } catch {
   console.error(
     '\nNot signed in to Railway.\n\n' +
-      '  Run `railway login` and approve it in the browser, or set RAILWAY_API_TOKEN.\n' +
-      '  Nothing else in this script can run without it.\n',
+      '  Run `railway login` and approve it in the browser *promptly* — the device code expires in\n' +
+      '  a few minutes and an approval after that writes no credentials. Or set RAILWAY_API_TOKEN,\n' +
+      '  which has no such window.\n',
   );
   process.exit(2);
 }
@@ -77,26 +86,28 @@ try {
 const skipCreate = process.argv.includes('--skip-create');
 
 // ---------------------------------------------------------------------------
-// 1. Project, then database — in that order
+// 1. Project, database, then the application service — in that order
 // ---------------------------------------------------------------------------
 if (!skipCreate) {
   railway(['init', '--name', PROJECT_NAME]);
 
-  // PostgreSQL first. The application migrates on start, so it needs a database to migrate into
+  // PostgreSQL first: the application migrates on start, so it needs a database to migrate into
   // before its first boot rather than after.
   railway(['add', '--database', 'postgres']);
+
+  // The application gets a service of its own. Without this, `railway up` would deploy into the
+  // service `add --database` just linked, which is the Postgres one.
+  railway(['add', '--service', APP_SERVICE]);
 }
 
 // ---------------------------------------------------------------------------
-// 2. The application service, and its variables
+// 2. Variables, on the application service
 // ---------------------------------------------------------------------------
-// Generated per deployment. The seed refuses to write its published defaults into a non-development
-// environment, so these are not optional.
 const variables = {
   ENVIRONMENT: 'production',
-  // Reference, not a copy: Railway substitutes the database service's own URL, so a rotated
-  // credential does not leave a stale literal behind.
-  DATABASE_URL: '${{Postgres.DATABASE_URL}}',
+  // A reference rather than a copy: Railway substitutes the database service's own URL, so a
+  // rotated credential does not leave a stale literal behind.
+  DATABASE_URL: `\${{${DB_SERVICE}.DATABASE_URL}}`,
   FRONTEND_DIST: '/app/frontend/dist',
 
   // The two guards the application refuses to start without.
@@ -118,26 +129,38 @@ const setArgs = [];
 for (const [key, value] of Object.entries(variables)) {
   setArgs.push('--set', `${key}=${value}`);
 }
-railway(['variables', ...setArgs]);
+railway(['variables', '--service', APP_SERVICE, ...setArgs]);
 
 // ---------------------------------------------------------------------------
-// 3. Build and deploy
+// 3. Build and deploy — explicitly into the application service
 // ---------------------------------------------------------------------------
-// --ci so the command returns when the build finishes rather than streaming forever.
-railway(['up', '--ci']);
+railway(['up', '--ci', '--service', APP_SERVICE]);
 
 // ---------------------------------------------------------------------------
-// 4. A public URL
+// 4. A public URL, for the application service
 // ---------------------------------------------------------------------------
-const domainOutput = railway(['domain'], { capture: true, allowFail: true });
-const match = /([a-z0-9-]+\.up\.railway\.app)/i.exec(domainOutput);
+let domainOutput = railway(['domain', '--service', APP_SERVICE], {
+  capture: true,
+  allowFail: true,
+});
+let match = /([a-z0-9-]+\.up\.railway\.app)/i.exec(domainOutput);
+if (!match) {
+  // `domain` with no argument generates one; if it had already been generated the first call
+  // reports it instead. Either way a second read is harmless.
+  domainOutput = railway(['domain', '--service', APP_SERVICE, '--json'], {
+    capture: true,
+    allowFail: true,
+  });
+  match = /([a-z0-9-]+\.up\.railway\.app)/i.exec(domainOutput);
+}
+
 const url = match ? `https://${match[1]}` : null;
 
 console.log('\n' + '='.repeat(60));
 if (!url) {
   console.log(
-    'Deployed, but no public domain was reported. Run `railway domain` to generate one,\n' +
-      'then verify with:\n' +
+    'Deployed, but no public domain was reported. Generate one and verify:\n' +
+      `  railway domain --service ${APP_SERVICE}\n` +
       '  npm run verify:deployment -- --base-url <url> --yes',
   );
   process.exit(0);
@@ -152,7 +175,7 @@ console.log(`health     : ${url}/api/health`);
 // 5. Verify — because a completed build is not a working application
 // ---------------------------------------------------------------------------
 console.log('\nWaiting for the deployment to answer its health check…');
-const deadline = Date.now() + 300_000;
+const deadline = Date.now() + 420_000;
 let healthy = false;
 while (Date.now() < deadline) {
   try {
@@ -167,15 +190,16 @@ while (Date.now() < deadline) {
       break;
     }
   } catch {
-    // Not up yet. A cold start includes the migration, so this can take a minute.
+    // Not up yet. A cold start includes the migration, so this can take a minute or two.
   }
   await new Promise((resolve) => setTimeout(resolve, 5_000));
 }
 
 if (!healthy) {
   console.error(
-    '\nThe deployment did not become healthy within five minutes.\n' +
-      '  railway logs        # the migration runs first; a failure there is fatal and logged\n',
+    '\nThe deployment did not become healthy in time.\n' +
+      `  railway logs --service ${APP_SERVICE}\n` +
+      '  The migration runs before the server binds; a failure there is fatal and logged.\n',
   );
   process.exit(1);
 }
@@ -193,6 +217,6 @@ run('node', [
 ]);
 
 console.log('\n' + '='.repeat(60));
-console.log('Deployment verified. Credentials for the reviewer are listed by:');
-console.log(`  curl -s ${url}/api/session | jq '.users'`);
-console.log('\nThe generated guard tokens are in Railway\'s variables for this service.');
+console.log('Deployment verified. The reviewer\'s credentials are listed by:');
+console.log(`  curl -s ${url}/api/session`);
+console.log(`\nThe generated guard tokens are in Railway's variables for ${APP_SERVICE}.`);
