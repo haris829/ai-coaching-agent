@@ -359,6 +359,25 @@ class SubmissionService:
             submitted_at_override=attempt.expires_at,
         )
 
+    def submit_on_disconnect(self, attempt: QuizAttempt) -> SubmissionResult:
+        """Submit a supervised attempt whose device stopped heart-beating (UC-09 §8).
+
+        Deliberately the same shape as :meth:`submit_on_expiry`, because it is the same
+        situation: the learner is not coming back, and the answers they saved must be committed
+        rather than lost. Completeness is not enforced — a disconnected learner cannot be asked to
+        finish — and the idempotency key is derived from the attempt, so however many disconnect
+        events arrive from however many monitors, there is one submission.
+
+        UC-09 decides *when* this applies; UC-03 owns what submitting means, exactly as it does
+        for a learner-confirmed submission and for an expiry.
+        """
+        return self._execute(
+            attempt.id,
+            idempotency_key=f"disconnect:{attempt.id}",
+            reason=SubmissionReason.DISCONNECT_AUTO_SUBMIT,
+            enforce_completeness=False,
+        )
+
     def describe(self, attempt_id: str) -> dict[str, Any]:
         """Current submission state for the status endpoint."""
         submitted = self._submissions.find_submitted(attempt_id)

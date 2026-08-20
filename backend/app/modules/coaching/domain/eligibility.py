@@ -89,6 +89,7 @@ def can_start_coaching(
     feedback: AttemptFeedback | None,
     question_id: str | None = None,
     service_available: bool = True,
+    formal_assessment_in_progress: bool = False,
 ) -> Eligibility:
     """Decide whether coaching may begin (§9).
 
@@ -113,6 +114,21 @@ def can_start_coaching(
         return Eligibility(
             code=EligibilityCode.NOT_ATTEMPT_OWNER,
             message="This attempt does not belong to the requesting learner.",
+            details={"attemptId": attempt_id},
+        )
+
+    # UC-09 §7. Checked here, immediately after ownership and before anything about *this*
+    # attempt, because the restriction is about the learner and not about the attempt: while a
+    # supervised exam of theirs is running, coaching is refused on every attempt they own,
+    # including older, submitted, fully scored ones. Placing it after the ownership check keeps
+    # the existing rule that a refusal never discloses another learner's state.
+    if formal_assessment_in_progress:
+        return Eligibility(
+            code=EligibilityCode.FORMAL_ASSESSMENT_IN_PROGRESS,
+            message=(
+                "AI coaching is unavailable while you are sitting a formal assessment. It "
+                "becomes available again once that assessment has been submitted."
+            ),
             details={"attemptId": attempt_id},
         )
 

@@ -38,6 +38,7 @@ CERTIFICATION = "app.modules.certification"
 FEEDBACK = "app.modules.feedback"
 COACHING = "app.modules.coaching"
 RETAKES = "app.modules.retakes"
+FORMAL_ASSESSMENT = "app.modules.formal_assessment"
 
 #: The capabilities, and the prefix each must not reach into outside its own ``integration/``.
 CAPABILITIES = {
@@ -49,6 +50,7 @@ CAPABILITIES = {
     "feedback": FEEDBACK,
     "coaching": COACHING,
     "retakes": RETAKES,
+    "formal_assessment": FORMAL_ASSESSMENT,
 }
 
 #: The single file in UC-01 that is allowed to know the question bank exists.
@@ -181,6 +183,7 @@ def test_the_domain_layers_stay_free_of_http_and_persistence() -> None:
         ("modules", "feedback", "domain"),
         ("modules", "coaching", "domain"),
         ("modules", "retakes", "domain"),
+        ("modules", "formal_assessment", "domain"),
     ):
         for path in _python_files(*parts):
             for name in _imported_modules(path):

@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.errors import AppError, ConflictError, NotFoundError
+from app.core.errors import AppError, ConflictError, ForbiddenError, NotFoundError
 
 # ---------------------------------------------------------------------------
 # The three boundary classes the kernel does not provide
@@ -135,6 +135,26 @@ class AttemptNotSubmittedError(CoachingNotAvailableError):
             ),
             retryable=True,
             context={"attemptId": attempt_id, "attemptStatus": status},
+        )
+
+
+class FormalAssessmentInProgressError(ForbiddenError):
+    """Coaching is refused because the learner is sitting a formal assessment (UC-09 §7).
+
+    403 rather than 409: this is not a conflict with the *attempt's* state — the attempt may be
+    long submitted and perfectly coachable — it is a refusal of the caller, right now, because of
+    something else they are doing. It is retryable in the sense that finishing the exam clears it,
+    which the eligibility payload says explicitly.
+    """
+
+    code = "FORMAL_ASSESSMENT_IN_PROGRESS"
+
+    def __init__(self, attempt_id: str, learner_id: str) -> None:
+        super().__init__(
+            "AI coaching is unavailable while you are sitting a formal assessment. It becomes "
+            "available again once that assessment has been submitted.",
+            code="FORMAL_ASSESSMENT_IN_PROGRESS",
+            context={"attemptId": attempt_id, "learnerId": learner_id},
         )
 
 

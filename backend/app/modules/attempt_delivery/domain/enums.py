@@ -84,6 +84,14 @@ class SubmissionReason(StrEnum):
     LEARNER_CONFIRMED = "LEARNER_CONFIRMED"
     #: The server-authoritative timer reached zero.
     TIME_EXPIRED = "TIME_EXPIRED"
+    #: A supervised sitting's device stopped heart-beating, and UC-09 committed the answers that
+    #: were already autosaved. Added with UC-09: a formal assessment cannot be resumed after a
+    #: disconnect, so the alternative to committing is losing the learner's work.
+    #:
+    #: UC-03 treats it exactly as it treats an expiry — the latest valid autosaved state, no
+    #: completeness requirement, one submission however many disconnect events arrive. The reason
+    #: exists so the record says *why*, which an assessor reviewing the attempt needs to see.
+    DISCONNECT_AUTO_SUBMIT = "DISCONNECT_AUTO_SUBMIT"
 
 
 class SubmissionState(StrEnum):

@@ -62,6 +62,9 @@ def configuration_version(
         "questionPresentation": version.question_presentation,
         "randomiseOptionOrder": bool(version.randomise_option_order),
         "allowIncompleteSubmission": bool(version.allow_incomplete_submission),
+        "isFormalAssessment": bool(version.is_formal_assessment),
+        "requiresHumanReview": bool(version.requires_human_review),
+        "requiresAssessorApproval": bool(version.requires_assessor_approval),
         "questionTypes": question_types(version),
         "topics": topic_scope(version),
         "isActive": is_active,
@@ -90,6 +93,10 @@ def rules_summary(version: ConfigurationVersion) -> dict[str, Any]:
         "questionPresentation": version.question_presentation,
         "randomiseOptionOrder": bool(version.randomise_option_order),
         "allowIncompleteSubmission": bool(version.allow_incomplete_submission),
+        # A learner is told a quiz is a formal assessment *before* starting it — that is the whole
+        # point of the conditions screen UC-09 gates on. The two flags about what happens after
+        # they pass are administrative and stay off this payload.
+        "isFormalAssessment": bool(version.is_formal_assessment),
         "maxAttempts": version.max_attempts,
         "questionTypes": question_types(version),
         "topics": topic_scope(version),

@@ -156,6 +156,33 @@ class ConfigurationVersion(Base):
         nullable=False, default=True, server_default=true()
     )
 
+    # ---- formal assessment settings read by UC-09 ------------------------
+    #: Whether sitting this quiz is a **formal assessment**: exam conditions acknowledged, identity
+    #: confirmed, one device, no pause, no coaching while it runs, and no certificate until a human
+    #: assessor approves the pass.
+    #:
+    #: It lives on the immutable version, not on the quiz, for the reason every other delivery
+    #: setting does: UC-09 resolves it from the version *locked to the attempt*, so a quiz made
+    #: formal tomorrow cannot retroactively change what a learner sat today — and one made informal
+    #: tomorrow cannot release a certificate that is still waiting on an assessor.
+    #:
+    #: ``False`` is exactly the system as it was before UC-09, which is why the three columns are
+    #: defaulted on both sides: every existing version reads as a standard quiz.
+    is_formal_assessment: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    #: Whether a passing formal attempt goes to a human assessor at all. Consulted **only** when
+    #: ``is_formal_assessment``; meaningless otherwise, and UC-09 never reads it otherwise.
+    requires_human_review: Mapped[bool] = mapped_column(
+        nullable=False, default=True, server_default=true()
+    )
+    #: Whether that assessor's approval is required before the certificate workflow may run.
+    #: Defaulted to ``True`` deliberately: a formal assessment configured carelessly withholds a
+    #: certificate rather than issuing one nobody checked.
+    requires_assessor_approval: Mapped[bool] = mapped_column(
+        nullable=False, default=True, server_default=true()
+    )
+
     #: Canonical hash of the settings; lets the service detect a no-op re-save.
     settings_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     created_by_user_id: Mapped[int | None] = mapped_column(

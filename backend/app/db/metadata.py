@@ -13,6 +13,7 @@ from app.modules.attempt_delivery import models as attempt_delivery_models  # no
 from app.modules.certification import models as certification_models  # noqa: F401
 from app.modules.coaching import models as coaching_models  # noqa: F401
 from app.modules.feedback import models as feedback_models  # noqa: F401
+from app.modules.formal_assessment import models as formal_assessment_models  # noqa: F401
 from app.modules.identity import models as identity_models  # noqa: F401
 from app.modules.question_bank import models as question_bank_models  # noqa: F401
 from app.modules.quiz_configuration import models as quiz_configuration_models  # noqa: F401

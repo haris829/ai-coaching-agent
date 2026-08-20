@@ -20,6 +20,8 @@ class ErrorCode(StrEnum):
     OUTCOME_ALREADY_DETERMINED = "OUTCOME_ALREADY_DETERMINED"
     CERTIFICATE_NOT_APPLICABLE = "CERTIFICATE_NOT_APPLICABLE"
     CERTIFICATE_NOT_FOUND = "CERTIFICATE_NOT_FOUND"
+    #: A passing formal assessment waiting on an assessor. Not a failure — see the helper below.
+    CERTIFICATE_AWAITING_APPROVAL = "CERTIFICATE_AWAITING_APPROVAL"
     CERTIFICATE_UNAVAILABLE = "CERTIFICATE_UNAVAILABLE"
     CPD_SYNC_UNAVAILABLE = "CPD_SYNC_UNAVAILABLE"
     PERSISTENCE_FAILED = "PERSISTENCE_FAILED"
@@ -86,6 +88,22 @@ def certificate_not_applicable(attempt_id: str, outcome: str) -> AppError:
         ErrorCode.CERTIFICATE_NOT_APPLICABLE,
         "A certificate is only issued for a passing attempt.",
         details={"attemptId": attempt_id, "outcome": outcome},
+    )
+
+
+def certificate_awaiting_formal_approval(attempt_id: str, reason: str | None) -> AppError:
+    """The learner passed a formal assessment and an assessor has not approved it yet (UC-09 §11).
+
+    409 and explicitly **not an error state**: nothing failed, and nothing needs fixing. A retry
+    endpoint has to be able to say "waiting for a person" rather than reporting a silent no-op,
+    because an operator watching a queue of pending certificates needs to tell the two apart.
+    """
+    return AppError(
+        409,
+        ErrorCode.CERTIFICATE_AWAITING_APPROVAL,
+        "This certificate is waiting for an assessor to approve the formal assessment.",
+        details={"attemptId": attempt_id, "reason": reason},
+        retryable=True,
     )
 
 

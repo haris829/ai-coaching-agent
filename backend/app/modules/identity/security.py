@@ -151,9 +151,63 @@ def require_admin(
     return normalise_actor(x_admin_user)
 
 
+def require_assessor_principal(
+    principal: Annotated[Principal, Depends(require_principal)],
+) -> Principal:
+    """An assessor, as a principal (UC-09).
+
+    Only the ``ASSESSOR`` role passes. An administrator credential is rejected rather than being
+    treated as good enough: a human review exists so that a named person signs off on a learner's
+    result, and letting whoever can configure the quiz also approve its passes would make the
+    review a formality. Whether *this* assessor may review *this* course is a separate question,
+    decided by UC-09 against the assessor directory on every operation.
+    """
+    if not principal.is_assessor:
+        raise ForbiddenError("This action requires the assessor role.")
+    return principal
+
+
+def require_assessor_id(
+    principal: Annotated[Principal, Depends(require_assessor_principal)],
+) -> str:
+    """The assessor's id, as the string written onto the review record and the audit trail."""
+    return str(principal.id)
+
+
+def require_system_actor(
+    principal: Annotated[Principal | None, Depends(optional_principal)],
+    authorization: AuthorizationHeader = None,
+) -> str:
+    """Authorise a platform-internal caller, and return what to attribute the call to.
+
+    Used by UC-09's system endpoints: the session monitor reporting that a formal attempt's device
+    stopped heart-beating, the certificate service asking whether it may generate, and the queue
+    recovery sweep. These are service-to-service calls with no human behind them.
+
+    Accepted credentials, in order: the dedicated ``SYSTEM_API_TOKEN``, or an administrator. An
+    assessor's or a learner's token is refused — a learner able to declare their own exam
+    disconnected could auto-submit a neighbour's paper, and these endpoints exist precisely to be
+    unreachable from a browser.
+
+    With no ``SYSTEM_API_TOKEN`` configured the path stays closed to learners and assessors but
+    open to an administrator, which is the same local-development posture ``require_admin`` takes.
+    """
+    token = bearer_token(authorization)
+    if settings.system_api_token and token == settings.system_api_token:
+        return "system"
+    if principal is not None and principal.is_admin:
+        return principal.actor
+    if principal is None:
+        raise UnauthorizedError("A system bearer token is required for this operation.")
+    raise ForbiddenError("This endpoint is for platform-internal callers only.")
+
+
 CurrentPrincipal = Annotated[Principal, Depends(require_principal)]
 AdminPrincipal = Annotated[Principal, Depends(require_admin_principal)]
 LearnerPrincipal = Annotated[Principal, Depends(require_learner_principal)]
 LearnerIdentity = Annotated[str, Depends(require_learner_id)]
 OptionalPrincipal = Annotated[Principal | None, Depends(optional_principal)]
 Actor = Annotated[str, Depends(require_admin)]
+AssessorPrincipal = Annotated[Principal, Depends(require_assessor_principal)]
+AssessorIdentity = Annotated[str, Depends(require_assessor_id)]
+SystemActor = Annotated[str, Depends(require_system_actor)]

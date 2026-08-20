@@ -10,6 +10,7 @@ Six capabilities, one API, one database, one error envelope:
 * **UC-06 Detailed Feedback Report** — ``/api/v1/attempts/{id}/feedback``
 * **UC-07 AI Coaching Review Mode** — ``/api/v1/attempts/{id}/coaching/…``
 * **UC-08 Retake Management** — ``/api/v1/quizzes/{id}/retakes`` · ``/api/admin/retakes/…``
+* **UC-09 Formal Assessment Mode** — ``/api/v1/formal-attempts/…`` · ``/api/assessor/…``
 
 Each is a separate module, and every dependency between them crosses a port with exactly one
 adapter behind it:
@@ -27,6 +28,10 @@ adapter behind it:
           ──FeedbackProvider──▶ UC-06 · ──CoachingLLM──▶ the AI provider (unbound by default)
     UC-08 ──ConfigurationProvider──▶ UC-01 · ──QuestionBankProvider──▶ UC-02
           ──AttemptProvider──▶ UC-03 (its one write) · ──history──▶ UC-04/05/06/07
+    UC-09 ──FormalAssessmentPolicyProvider──▶ UC-01 · ──AttemptProvider──▶ UC-03
+          ──Scoring/PassFail──▶ UC-04/UC-05 · ──CertificateWorkflow──▶ UC-05
+    UC-07 ◀──FormalAssessmentPolicyPort── UC-09   (coaching is refused mid-exam)
+    UC-05 ◀──CertificateGatePort────────── UC-09   (no certificate before approval)
 
 No module imports another's models directly, there is exactly one question bank, and exactly one
 owner of attempts. ``tests/test_architecture.py`` enforces that rather than trusting it.
@@ -57,6 +62,18 @@ from app.modules.certification.api.router import router as certification_router
 from app.modules.coaching.api.router import coaching_router
 from app.modules.coaching.container import CoachingAppContext
 from app.modules.feedback.api.router import router as feedback_router
+from app.modules.formal_assessment.api.router import (
+    formal_assessment_router,
+    formal_assessor_router,
+    formal_system_router,
+)
+from app.modules.formal_assessment.container import FormalAssessmentAppContext
+from app.modules.formal_assessment.integration.adapters import (
+    FormalCertificateWorkflowAdapter,
+)
+from app.modules.formal_assessment.integration.uc03_adapter import (
+    attempt_provider_factory as formal_attempt_provider_factory,
+)
 from app.modules.identity.api import router as identity_router
 from app.modules.question_bank.api.router import question_bank_router
 from app.modules.quiz_configuration.api.router import quiz_configuration_router
@@ -118,6 +135,7 @@ def create_app(
     results_context: ResultsAppContext | None = None,
     coaching_context: CoachingAppContext | None = None,
     retake_context: RetakeAppContext | None = None,
+    formal_context: FormalAssessmentAppContext | None = None,
 ) -> FastAPI:
     """Build the app.
 
@@ -125,7 +143,9 @@ def create_app(
     database, or a failing submission dispatcher without patching internals. ``results_context``
     does the same for the results chain (UC-04 → UC-05 → UC-06) — a failing certificate service, for
     instance — and ``coaching_context`` for UC-07, whose AI provider is the boundary a test most
-    needs to control. ``retake_context`` does the same for UC-08.
+    needs to control. ``retake_context`` does the same for UC-08, and
+    ``formal_context`` for UC-09 — whose assessor directory and review queue are the boundaries a
+    test most needs to control.
     """
     configure_logging()
 
@@ -187,6 +207,19 @@ def create_app(
         clock=context.clock,
     )
 
+    # UC-09 supervises a sitting UC-03 delivers and UC-05 certificates, so it is given both: a
+    # per-session UC-03 attempt provider, and a certificate workflow that calls UC-05's own
+    # service once an assessor approves. Both are passed in rather than resolved inside UC-09's
+    # composition root, which is not allowed to know which capability satisfies one of its ports.
+    app.state.formal_assessment = formal_context or FormalAssessmentAppContext(
+        session_factory=context.session_factory,
+        upstream=formal_attempt_provider_factory(context),
+        certificates=lambda session: FormalCertificateWorkflowAdapter(
+            session, results.build(session).certification
+        ),
+        clock=context.clock,
+    )
+
     # Wire the result chain into UC-03's downstream hand-off, which is the seam its
     # SubmissionDispatchPort was written for. Only when the dispatcher is still the documented no-op
     # default: a caller that supplied its own dispatcher meant it, and silently wrapping it would
@@ -232,6 +265,7 @@ def create_app(
                 "UC-06 Detailed Feedback Report",
                 "UC-07 AI Coaching Review Mode",
                 "UC-08 Retake Management",
+                "UC-09 Formal Assessment Mode",
             ],
             "database": "ok" if database_ok else "unreachable",
             "environment": settings.environment,
@@ -263,6 +297,13 @@ def create_app(
     # while its administrator half sits with UC-01's and UC-02's admin surface.
     app.include_router(retakes_router, prefix=f"{settings.api_prefix}/v1")
     app.include_router(retake_admin_router, prefix=f"{settings.api_prefix}/admin/retakes")
+    # UC-09's learner half joins the same versioned conversation; its assessor and system halves
+    # get their own roots, because they carry different credentials.
+    app.include_router(formal_assessment_router, prefix=f"{settings.api_prefix}/v1")
+    app.include_router(formal_assessor_router, prefix=f"{settings.api_prefix}/assessor")
+    app.include_router(
+        formal_system_router, prefix=f"{settings.api_prefix}/system/formal-assessments"
+    )
 
     logger.info(
         "app.started",

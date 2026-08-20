@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     # backend runs standalone in local development; identity still resolves from ``qc_users``.
     admin_api_token: str | None = Field(default=None)
 
+    # ---- Service-to-service guard (UC-09) --------------------------------
+    #: Credential for platform-internal callers: the session monitor reporting a formal
+    #: assessment's disconnect, the certificate service asking whether it may generate, and the
+    #: review-queue recovery sweep. Separate from the administrator token because these are not
+    #: administrators — and because a learner or assessor must never reach those endpoints.
+    #: Unset, an administrator credential is accepted instead, for local development.
+    system_api_token: str | None = Field(default=None)
+
     # ---- CSV import limits ----------------------------------------------
     csv_max_bytes: int = Field(default=5 * 1024 * 1024)
     csv_max_rows: int = Field(default=5_000)
@@ -131,12 +139,36 @@ class Settings(BaseSettings):
         )
     )
 
+    # ---- UC-09 Formal Assessment Mode ------------------------------------
+    #: The version of the conditions text a learner acknowledges. Recorded on the acknowledgement,
+    #: so "which conditions did this learner actually agree to?" stays answerable after the wording
+    #: changes. Bump it when the conditions in ``formal_assessment/domain/conditions.py`` change:
+    #: an acknowledgement of an older version stops satisfying the gate, and learners starting a
+    #: new formal attempt re-read and re-acknowledge — which is the only reading under which a
+    #: stored acknowledgement means anything.
+    formal_conditions_version: str = Field(default="2026.1")
+
+    #: How many publish attempts the recovery service makes before leaving an entry for an
+    #: operator. The entry is never discarded and the certificate stays blocked either way — this
+    #: bounds noise, not durability.
+    review_queue_max_publish_attempts: int = Field(default=5, ge=1, le=100)
+
+    #: How long the authoritative device session may go without a heartbeat before the platform's
+    #: session monitor is entitled to call it disconnected. UC-09 runs no timer of its own; this is
+    #: the number it publishes so the monitor and the module agree on one threshold.
+    session_heartbeat_timeout_seconds: int = Field(default=90, ge=15, le=3600)
+
+    #: What is deliberately **not** configurable: identity matching, email confirmation, pausing,
+    #: the AI-coaching restriction and the certificate gate. Those are the rules UC-09 exists for,
+    #: and a deployment that could switch one off through configuration would be a deployment where
+    #: the rule was never enforced.
+
     # ---- Local development convenience ---------------------------------
     #: Seed a brand new local database so the workflow is demonstrable immediately.
     #: Always off under ``ENVIRONMENT=test``.
     auto_seed: bool = Field(default=True)
 
-    @field_validator("admin_api_token", "coaching_llm_api_key", mode="before")
+    @field_validator("admin_api_token", "system_api_token", "coaching_llm_api_key", mode="before")
     @classmethod
     def _blank_token_is_none(cls, value: object) -> object:
         if isinstance(value, str) and value.strip() == "":
@@ -152,6 +184,14 @@ class Settings(BaseSettings):
         up front rather than after the learner has typed a question.
         """
         return bool(self.coaching_llm_provider.strip()) and bool(self.coaching_llm_api_key)
+
+    @field_validator("formal_conditions_version", mode="before")
+    @classmethod
+    def _conditions_version_not_blank(cls, value: object) -> object:
+        """A blank conditions version would make every acknowledgement match every other one."""
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("formal_conditions_version must not be blank.")
+        return value
 
     @field_validator("retake_configuration_policy", mode="before")
     @classmethod

@@ -101,6 +101,16 @@ class QuizConfiguration:
     #: May the learner submit with questions left unanswered?
     allow_incomplete_submission: bool = True
 
+    # ---- formal assessment settings read by UC-09 ------------------------
+    #: Whether sitting this quiz is a formal assessment. See the column of the same name in
+    #: ``models.py`` for why it belongs on the immutable version rather than on the quiz.
+    is_formal_assessment: bool = False
+    #: Consulted only when ``is_formal_assessment``. Both default to the stricter answer, so a
+    #: formal assessment configured carelessly withholds a certificate rather than issuing one
+    #: nobody checked.
+    requires_human_review: bool = True
+    requires_assessor_approval: bool = True
+
     @property
     def selected_types(self) -> tuple[QuestionType, ...]:
         return tuple(entry.type for entry in self.question_types)
@@ -300,6 +310,29 @@ def validate_configuration(raw: Any) -> ValidationResult:
         default=True,
         push=push,
     )
+    # UC-09's three. Absent from a payload means "a standard quiz", which is what every
+    # configuration saved before UC-09 existed meant.
+    is_formal = _optional_flag(
+        raw.get("isFormalAssessment", _MISSING),
+        field_name="isFormalAssessment",
+        label="Formal assessment",
+        default=False,
+        push=push,
+    )
+    requires_review = _optional_flag(
+        raw.get("requiresHumanReview", _MISSING),
+        field_name="requiresHumanReview",
+        label="Human review",
+        default=True,
+        push=push,
+    )
+    requires_approval = _optional_flag(
+        raw.get("requiresAssessorApproval", _MISSING),
+        field_name="requiresAssessorApproval",
+        label="Assessor approval",
+        default=True,
+        push=push,
+    )
 
     # --- cross-field rules --------------------------------------------------
     if (
@@ -335,6 +368,9 @@ def validate_configuration(raw: Any) -> ValidationResult:
             question_presentation=presentation,
             randomise_option_order=randomise_options,
             allow_incomplete_submission=allow_incomplete,
+            is_formal_assessment=is_formal,
+            requires_human_review=requires_review,
+            requires_assessor_approval=requires_approval,
         ),
     )
 
@@ -616,6 +652,12 @@ def fingerprint_configuration(config: QuizConfiguration) -> str:
         "questionPresentation": config.question_presentation.value,
         "randomiseOptionOrder": config.randomise_option_order,
         "allowIncompleteSubmission": config.allow_incomplete_submission,
+        # In the fingerprint because turning a quiz into a formal assessment is a meaningful
+        # change: it must publish a new immutable version rather than being absorbed as a no-op
+        # re-save, or learners mid-attempt would be under rules nobody versioned.
+        "isFormalAssessment": config.is_formal_assessment,
+        "requiresHumanReview": config.requires_human_review,
+        "requiresAssessorApproval": config.requires_assessor_approval,
     }
     payload = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

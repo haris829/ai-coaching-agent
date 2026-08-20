@@ -45,6 +45,10 @@ from app.modules.certification.integration.cpd.port import (
     CpdSyncRecord,
     TransientCpdError,
 )
+from app.modules.certification.integration.formal_gate import (
+    CertificateGatePort,
+    UnrestrictedCertificateGate,
+)
 from app.modules.certification.integration.scoring.port import ConfirmedResult, ScoreResultPort
 from app.modules.certification.models import AttemptOutcome, Certificate, CpdRecord
 from app.modules.certification.repositories import CertificationRepository
@@ -89,6 +93,7 @@ class CertificationService:
         "_certificates",
         "_cpd",
         "_clock",
+        "_formal_gate",
     )
 
     def __init__(
@@ -101,6 +106,7 @@ class CertificationService:
         certificates: CertificateServicePort,
         cpd: CpdSyncPort,
         clock: Clock,
+        formal_gate: CertificateGatePort | None = None,
     ) -> None:
         self._session = session
         self._repository = repository
@@ -109,6 +115,10 @@ class CertificationService:
         self._certificates = certificates
         self._cpd = cpd
         self._clock = clock
+        # UC-09's certificate gate. Defaulted to "allow", which is the truth for a deployment with
+        # no formal assessments — see ``integration/formal_gate.py`` for why that default is safe
+        # and why an *unreadable* gate is a different case that raises.
+        self._formal_gate = formal_gate or UnrestrictedCertificateGate()
 
     # ------------------------------------------------------------------ read
 
@@ -182,6 +192,43 @@ class CertificationService:
             raise errors.certificate_not_applicable(attempt_id, outcome.outcome)
 
         self._issue_certificate(outcome, policy, raise_on_failure=True)
+        return self._view(outcome, policy)
+
+    def issue_after_formal_approval(
+        self, attempt_id: str, *, approved_by: str, idempotency_key: str | None = None
+    ) -> OutcomeView:
+        """Generate the certificate for a formal assessment an assessor has just approved (UC-09).
+
+        The one caller that bypasses the gate, and it does so because it *is* the event the gate
+        was waiting for — asking UC-09 again here would be asking it to confirm the decision it
+        has just made, against a record it may not have committed yet.
+
+        Everything else is UC-05's ordinary path: the same PENDING row, the same duplicate
+        prevention, the same certificate service, the same retry semantics. UC-09 does not create
+        a certificate; it removes the reason one was being withheld.
+        """
+        policy = self._attempts.get_policy(attempt_id)
+        if policy is None:
+            raise errors.attempt_not_found(attempt_id)
+        outcome = self._repository.get_outcome(attempt_id)
+        if outcome is None:
+            raise errors.outcome_not_found(attempt_id)
+        if outcome.outcome != str(Outcome.PASS):
+            # An approval on a failed attempt is a defect upstream, refused rather than honoured:
+            # a certificate for a fail is worse than a missing certificate for a pass.
+            raise errors.certificate_not_applicable(attempt_id, outcome.outcome)
+
+        logger.info(
+            "certification.certificate_released_by_approval",
+            extra={
+                "attemptId": attempt_id,
+                "approvedBy": approved_by,
+                "idempotencyKey": idempotency_key,
+            },
+        )
+        self._issue_certificate(
+            outcome, policy, raise_on_failure=True, formal_approval_granted=True
+        )
         return self._view(outcome, policy)
 
     def retry_cpd(self, attempt_id: str, *, learner_id: str | None = None) -> OutcomeView:
@@ -343,8 +390,42 @@ class CertificationService:
     # ---- certificate -------------------------------------------------------
 
     def _issue_certificate(
-        self, outcome: AttemptOutcome, policy: AttemptPolicy, *, raise_on_failure: bool
+        self,
+        outcome: AttemptOutcome,
+        policy: AttemptPolicy,
+        *,
+        raise_on_failure: bool,
+        formal_approval_granted: bool = False,
     ) -> Certificate | None:
+        """Generate the certificate for a passing attempt, unless something says not yet.
+
+        ``formal_approval_granted`` is passed only by :meth:`issue_after_formal_approval`, which
+        is the call UC-09 makes *because* an assessor has just approved. Everything else — the
+        submission pipeline, the retry endpoint, an operator sweep — goes through the gate.
+        """
+        # UC-09 §11. Asked before anything is requested and at the single point a certificate can
+        # be generated, so there is no route to one that skips it. A blocked formal assessment
+        # leaves the PENDING certificate row in place: the obligation stays durable and visible,
+        # and the approval later drives it rather than creating it from nothing.
+        if not formal_approval_granted:
+            gate = self._formal_gate.check_attempt(outcome.attempt_id)
+            if not gate.certificate_allowed:
+                logger.info(
+                    "certification.certificate_withheld_pending_review",
+                    extra={
+                        "attemptId": outcome.attempt_id,
+                        "reason": gate.reason,
+                        "reviewId": gate.review_id,
+                    },
+                )
+                if raise_on_failure:
+                    # A retry endpoint must say why rather than reporting a silent no-op: the
+                    # certificate is not failing, it is waiting for a person.
+                    raise errors.certificate_awaiting_formal_approval(
+                        outcome.attempt_id, gate.reason
+                    )
+                return None
+
         certificate = self._repository.get_certificate(outcome.attempt_id)
         if certificate is None:
             # A pass with no certificate row: only reachable if the obligation was never written.

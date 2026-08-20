@@ -84,6 +84,9 @@ def to_domain(version: ConfigurationVersion) -> QuizConfiguration:
         question_presentation=QuestionPresentation(version.question_presentation),
         randomise_option_order=bool(version.randomise_option_order),
         allow_incomplete_submission=bool(version.allow_incomplete_submission),
+        is_formal_assessment=bool(version.is_formal_assessment),
+        requires_human_review=bool(version.requires_human_review),
+        requires_assessor_approval=bool(version.requires_assessor_approval),
     )
 
 

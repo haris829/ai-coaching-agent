@@ -36,6 +36,7 @@ from app.modules.coaching.domain.errors import (
     AttemptNotSubmittedError,
     CoachingServiceUnavailableError,
     FeedbackUnavailableError,
+    FormalAssessmentInProgressError,
     LearnerNotAuthorizedError,
     QuestionNotInAttemptError,
     QuestionNotIncorrectError,
@@ -45,6 +46,10 @@ from app.modules.coaching.integration.llm import CoachingLLM
 from app.modules.coaching.integration.uc03 import AttemptContext, AttemptProvider
 from app.modules.coaching.integration.uc04 import AttemptScore, ScoringResultProvider
 from app.modules.coaching.integration.uc06 import AttemptFeedback, FeedbackProvider
+from app.modules.coaching.integration.uc09 import (
+    FormalAssessmentPolicyPort,
+    UnrestrictedFormalAssessmentPolicy,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +85,8 @@ def eligibility_error(
         return AttemptNotFoundError(attempt_id)
     if code is EligibilityCode.NOT_ATTEMPT_OWNER:
         return LearnerNotAuthorizedError(attempt_id, learner_id)
+    if code is EligibilityCode.FORMAL_ASSESSMENT_IN_PROGRESS:
+        return FormalAssessmentInProgressError(attempt_id, learner_id)
     if code is EligibilityCode.ATTEMPT_NOT_SUBMITTED:
         return AttemptNotSubmittedError(attempt_id, str(details.get("attemptStatus")))
     if code is EligibilityCode.SCORE_NOT_CONFIRMED:
@@ -105,11 +112,16 @@ class CoachingAuthorizer:
         scores: ScoringResultProvider,
         feedback: FeedbackProvider,
         llm: CoachingLLM,
+        formal_assessment: FormalAssessmentPolicyPort | None = None,
     ) -> None:
         self._attempts = attempts
         self._scores = scores
         self._feedback = feedback
         self._llm = llm
+        # Defaulted rather than required, so a deployment without UC-09 keeps working and every
+        # existing caller of this constructor stays valid. See ``integration/uc09.py`` for why
+        # "allow" is the honest default here and "refuse" is the honest default everywhere else.
+        self._formal_assessment = formal_assessment or UnrestrictedFormalAssessmentPolicy()
 
     async def evaluate(
         self,
@@ -129,11 +141,17 @@ class CoachingAuthorizer:
 
         score: AttemptScore | None = None
         feedback: AttemptFeedback | None = None
+        formal_in_progress = False
         # Only read further once the attempt is known to be this learner's: an ownership failure
         # must not be preceded by queries that could differ observably for someone else's attempt.
         if attempt is not None and attempt.learner_id == learner_id:
             score = await self._scores.get_score(attempt_id)
             feedback = await self._feedback.get_attempt_feedback(attempt_id)
+            # UC-09 §7, read on every operation like everything else here. Learner-scoped: the
+            # question is whether *this learner* is mid-exam, not whether this attempt is one.
+            formal_in_progress = (
+                await self._formal_assessment.get_status_for_learner(learner_id)
+            ).in_progress
 
         service_available = True
         if require_service:
@@ -147,6 +165,7 @@ class CoachingAuthorizer:
             feedback=feedback,
             question_id=question_id,
             service_available=service_available,
+            formal_assessment_in_progress=formal_in_progress,
         )
         return GateResult(
             eligibility=eligibility, attempt=attempt, score=score, feedback=feedback

@@ -142,5 +142,14 @@ class Uc01ConfigurationAdapter:
                 "quizTitle": quiz.title,
                 "courseTitle": quiz.course.title if quiz.course is not None else None,
                 "settingsFingerprint": version.settings_fingerprint,
+                # UC-09's three flags, carried the same way and for the same reason. UC-03 does
+                # not act on them either — it records that the sitting was formal and nothing
+                # more — but freezing them onto the attempt is what lets UC-09 resolve the policy
+                # from the version *this* attempt locked. A quiz made formal tomorrow must not
+                # retroactively gate a certificate somebody already earned, and one made informal
+                # tomorrow must not release one still waiting on an assessor.
+                "isFormalAssessment": bool(version.is_formal_assessment),
+                "requiresHumanReview": bool(version.requires_human_review),
+                "requiresAssessorApproval": bool(version.requires_assessor_approval),
             },
         )

@@ -102,6 +102,13 @@ class EligibilityCode(StrEnum):
     QUESTION_NOT_INCORRECT = "QUESTION_NOT_INCORRECT"
     #: The coaching service itself cannot be reached (§27).
     SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
+    #: A formal assessment of this learner's is in progress (UC-09 §7).
+    #:
+    #: Learner-scoped, not attempt-scoped, and that is the whole point: while somebody is sitting
+    #: a supervised exam, coaching is refused on *every* attempt of theirs — including older,
+    #: submitted, fully scored ones. An attempt-scoped check would miss the case that matters,
+    #: which is an exam open in one tab and a coach in another.
+    FORMAL_ASSESSMENT_IN_PROGRESS = "FORMAL_ASSESSMENT_IN_PROGRESS"
 
 
 #: Refusals caused by the state of the world rather than by the request. A frontend can retry these
@@ -111,6 +118,9 @@ TRANSIENT_ELIGIBILITY_CODES: frozenset[EligibilityCode] = frozenset(
         EligibilityCode.SCORE_NOT_CONFIRMED,
         EligibilityCode.FEEDBACK_UNAVAILABLE,
         EligibilityCode.SERVICE_UNAVAILABLE,
+        # Transient in the exact sense this set means: the learner will be able to coach on this
+        # attempt once they finish the exam they are currently sitting.
+        EligibilityCode.FORMAL_ASSESSMENT_IN_PROGRESS,
     }
 )
 
