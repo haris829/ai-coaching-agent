@@ -16,6 +16,7 @@ from app.modules.feedback import models as feedback_models  # noqa: F401
 from app.modules.identity import models as identity_models  # noqa: F401
 from app.modules.question_bank import models as question_bank_models  # noqa: F401
 from app.modules.quiz_configuration import models as quiz_configuration_models  # noqa: F401
+from app.modules.retakes import models as retake_models  # noqa: F401
 from app.modules.scoring import models as scoring_models  # noqa: F401
 
 #: What Alembic compares the database against.

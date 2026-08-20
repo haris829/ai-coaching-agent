@@ -83,6 +83,19 @@ class QuizAttempt(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     question_presentation: Mapped[str] = mapped_column(String(24), nullable=False)
 
+    #: The attempt this one is a retake of (UC-08). A soft reference like the three above:
+    #: lineage for history and analytics, never a rule — the allowance is UC-08's to decide.
+    #: NULL on every first attempt, which is what every attempt created before UC-08 was.
+    retake_of_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+    #: Whether this attempt was sat under UC-09 exam conditions. Recorded here, on the row
+    #: UC-03 already owns, because "was this sitting formal?" is a fact about the sitting and
+    #: must stay true even if the quiz stops being a formal assessment tomorrow. UC-09 owns
+    #: the lifecycle around it; UC-03 owns only this flag.
+    is_formal_assessment: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
+
     #: Persisted so a randomised selection is reproducible and auditable.
     selection_seed: Mapped[str] = mapped_column(String(64), nullable=False)
     total_questions: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -128,7 +141,7 @@ class QuizAttempt(Base):
         ),
         CheckConstraint(
             "submission_reason IS NULL OR "
-            "submission_reason IN ('LEARNER_CONFIRMED', 'TIME_EXPIRED')",
+            "submission_reason IN ('LEARNER_CONFIRMED', 'TIME_EXPIRED', 'DISCONNECT_AUTO_SUBMIT')",
             name="ck_attempt_reason",
         ),
         CheckConstraint("attempt_number >= 1", name="ck_attempt_number"),
@@ -169,6 +182,9 @@ class QuizAttempt(Base):
         Index("ix_attempt_learner_quiz", "learner_id", "quiz_id", "status"),
         Index("ix_attempt_learner_course", "learner_id", "course_id"),
         Index("ix_attempt_config_version", "configuration_version_id"),
+        # Retake lineage (UC-08) and the formal/standard split UC-10 filters analytics by.
+        Index("ix_attempt_retake_of", "retake_of_attempt_id"),
+        Index("ix_attempt_formal", "quiz_id", "is_formal_assessment"),
         # Supports sweeping for attempts whose time limit has elapsed.
         Index("ix_attempt_expiry", "status", "expires_at"),
     )

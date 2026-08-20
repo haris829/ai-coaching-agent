@@ -85,10 +85,48 @@ class EligibilityReport:
 
 
 @dataclass(frozen=True, slots=True)
+class RetakeDirective:
+    """What UC-08 has already decided about a retake, handed to UC-03 to deliver.
+
+    UC-03 creates every attempt, including retakes: a second creation path would be a second
+    attempt lifecycle, and the two would drift. What a retake changes is narrow and stated
+    here rather than inferred, so a reader can see exactly which of UC-03's rules UC-08
+    overrides and why:
+
+    ``configuration_version_id``
+        The version UC-08 resolved. Re-reading the active version here could lock a
+        *different* one if an administrator published between the eligibility check and this
+        call — the retake would then run under a configuration nobody checked the allowance
+        against.
+
+    ``attempt_number``
+        The slot UC-08 reserved. ``next_attempt_number`` would recompute it from rows UC-03
+        can see, which excludes another request's in-flight reservation.
+
+    ``deprioritised_question_ids``
+        What the learner has already been shown. A preference for the selector, never a
+        filter — see ``QuestionSelectionService.select``.
+
+    The maximum-attempts check is skipped, and only for a retake: UC-08 is the authority on
+    the allowance because it is the only module that can see administrator grants and
+    in-flight reservations. Every other rule — enrolment, availability, one open attempt at a
+    time, the configuration lock, the frozen snapshot, the timer, and both unique
+    constraints — applies to a retake exactly as it does to a first attempt.
+    """
+
+    previous_attempt_id: str
+    configuration_version_id: str
+    attempt_number: int
+    deprioritised_question_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class AttemptCreationResult:
     attempt: QuizAttempt
     questions: Sequence[AttemptQuestion]
     type_counts: dict[str, int]
+    #: Deprioritised questions the bank was too small to avoid re-delivering (UC-08 §17).
+    reused_question_ids: tuple[str, ...] = ()
 
 
 class AttemptService:
@@ -225,7 +263,14 @@ class AttemptService:
 
     # ------------------------------------------------------------ creation
 
-    def create_attempt(self, learner_id: str, quiz_id: str) -> AttemptCreationResult:
+    def create_attempt(
+        self,
+        learner_id: str,
+        quiz_id: str,
+        *,
+        retake: RetakeDirective | None = None,
+        formal_assessment: bool = False,
+    ) -> AttemptCreationResult:
         """Create an attempt.
 
         The order is deliberate:
@@ -235,6 +280,10 @@ class AttemptService:
         Everything before ``persist`` is validation and reads across the UC-01/UC-02
         boundaries. Only once all of it has passed is anything written, and then the
         attempt row and its complete question set are committed together.
+
+        ``retake`` (UC-08) and ``formal_assessment`` (UC-09) are additive: with both at their
+        defaults this is the method as it was, step for step. See :class:`RetakeDirective` for
+        exactly which rules a retake overrides.
         """
         # ---- 1. The quiz itself must be attemptable. ----------------------
         availability = self._configurations.get_quiz_availability(quiz_id)
@@ -251,16 +300,29 @@ class AttemptService:
         if enrolment.status not in ATTEMPT_ELIGIBLE_ENROLMENT_STATUSES:
             raise errors.enrolment_not_active(learner_id, course_id, str(enrolment.status))
 
-        # ---- 3. Read the active configuration exactly once, and lock it. --
-        active = self._configurations.get_active_configuration(quiz_id)
+        # ---- 3. Read the configuration exactly once, and lock it. --------
+        if retake is None:
+            active = self._configurations.get_active_configuration(quiz_id)
+        else:
+            # The version UC-08 resolved, not whatever is active now — see RetakeDirective.
+            active = self._configurations.get_configuration_version(
+                retake.configuration_version_id
+            )
         if active is None:
             raise errors.configuration_version_unavailable(quiz_id)
         configuration = lock_configuration(active)
 
         # ---- 4. Remaining attempts. --------------------------------------
-        attempts_used = self._attempts.count_for_learner_and_quiz(learner_id, quiz_id)
-        if configuration.max_attempts is not None and attempts_used >= configuration.max_attempts:
-            raise errors.max_attempts_reached(attempts_used, configuration.max_attempts)
+        # Skipped for a retake: UC-08 holds the allowance, because only UC-08 can see
+        # administrator grants and another request's reservation. It is skipped rather than
+        # relaxed — UC-08 has already refused the retake if no attempt remained.
+        if retake is None:
+            attempts_used = self._attempts.count_for_learner_and_quiz(learner_id, quiz_id)
+            if (
+                configuration.max_attempts is not None
+                and attempts_used >= configuration.max_attempts
+            ):
+                raise errors.max_attempts_reached(attempts_used, configuration.max_attempts)
 
         # ---- 5. Only one attempt may be open at a time. ------------------
         open_attempt = self._attempts.find_open(learner_id, quiz_id)
@@ -280,12 +342,21 @@ class AttemptService:
         attempt_id = new_id()
         # The attempt id doubles as the randomisation seed, so the selection is
         # reproducible from the persisted row alone.
-        selection = self._selection.select(configuration, pool, attempt_id)
+        selection = self._selection.select(
+            configuration,
+            pool,
+            attempt_id,
+            deprioritised_question_ids=retake.deprioritised_question_ids if retake else (),
+        )
 
         # ---- 7. Persist atomically. --------------------------------------
         started_at = self._clock.now()
         expires_at = self._timing.compute_expiry(started_at, configuration.time_limit_seconds)
-        attempt_number = self._attempts.next_attempt_number(learner_id, quiz_id)
+        attempt_number = (
+            retake.attempt_number
+            if retake is not None
+            else self._attempts.next_attempt_number(learner_id, quiz_id)
+        )
 
         attempt = QuizAttempt(
             id=attempt_id,
@@ -298,6 +369,8 @@ class AttemptService:
             attempt_number=attempt_number,
             status=str(AttemptStatus.ACTIVE),
             question_presentation=str(configuration.question_presentation),
+            retake_of_attempt_id=retake.previous_attempt_id if retake else None,
+            is_formal_assessment=formal_assessment,
             selection_seed=attempt_id,
             total_questions=len(selection.questions),
             current_position=1,
@@ -362,6 +435,7 @@ class AttemptService:
             attempt=created,
             questions=self._attempt_questions.list_for_attempt(attempt_id),
             type_counts=selection.type_counts,
+            reused_question_ids=selection.reused_question_ids,
         )
 
     # ----------------------------------------------------------- retrieval

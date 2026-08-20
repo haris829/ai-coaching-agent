@@ -36,16 +36,13 @@ they raise, because losing those *is* losing the conversation.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime
-from functools import partial
-from typing import Any, TypeVar
 
-import anyio.to_thread
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.core.async_db import offload
 from app.core.errors import PersistenceFailedError
 from app.core.logging import get_logger
 from app.core.time import parse_instant, to_iso, utcnow
@@ -67,16 +64,10 @@ from app.modules.coaching.models import (
 
 logger = get_logger(__name__)
 
-_T = TypeVar("_T")
-
-
-async def offload(function: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
-    """Run one synchronous database call on a worker thread.
-
-    See the module docstring. Confined to this one helper so the pattern is a single documented
-    decision rather than a habit scattered through the adapters.
-    """
-    return await anyio.to_thread.run_sync(partial(function, *args, **kwargs))
+#: Re-exported so UC-07's adapters keep importing it from here, where they always have. The
+#: helper itself moved to ``app.core.async_db`` when UC-08, UC-09 and UC-10 arrived needing the
+#: same bridge — one implementation of it, rather than four.
+__all__ = ["offload"]
 
 
 # ---------------------------------------------------------------------------

@@ -125,9 +125,13 @@ class ValidationError(AppError):
         details: list[FieldIssue] | None = None,
         *,
         code: str | None = None,
+        context: dict[str, Any] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(message, code=code, details=details, extra=extra)
+        # ``context`` forwarded because ``AppError`` has always accepted it and renders it; the
+        # capabilities that describe *which* configuration or question set was invalid need it,
+        # and the alternative was each of them defining a near-identical 422 of its own.
+        super().__init__(message, code=code, details=details, context=context, extra=extra)
 
 
 class NotFoundError(AppError):
@@ -166,8 +170,20 @@ class ConflictError(AppError):
         details: list[FieldIssue] | None = None,
         context: dict[str, Any] | None = None,
         extra: dict[str, Any] | None = None,
+        retryable: bool = False,
     ) -> None:
-        super().__init__(message, code=code, details=details, context=context, extra=extra)
+        # Most conflicts are permanent — the state genuinely disagrees with the request. A few
+        # are not: "no configuration version is active *yet*" is a conflict now and may resolve
+        # on its own, and a client needs to be able to tell those apart to decide whether a
+        # retry button makes sense.
+        super().__init__(
+            message,
+            code=code,
+            details=details,
+            context=context,
+            extra=extra,
+            retryable=retryable,
+        )
 
 
 class PayloadTooLargeError(AppError):
@@ -188,9 +204,16 @@ class ForbiddenError(AppError):
     code = "FORBIDDEN"
 
     def __init__(
-        self, message: str = "You do not have permission to perform this action."
+        self,
+        message: str = "You do not have permission to perform this action.",
+        *,
+        code: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(message)
+        # ``context`` names *which* resource was refused, which an operator needs when a learner
+        # reports being locked out of something they believe is theirs. It never contains the
+        # requester's credentials — only the identifiers already in the request.
+        super().__init__(message, code=code, context=context)
 
 
 class DatabaseError(AppError):
@@ -257,3 +280,58 @@ PLATFORM_ERROR_CODES: frozenset[str] = frozenset(
         "INTERNAL_ERROR",
     }
 )
+
+
+class ProviderUnavailableError(AppError):
+    """503 — a module or external system this request depends on could not be reached.
+
+    Added with UC-08/09/10, which are the first capabilities whose work genuinely spans
+    several modules at request time: a retake reads UC-01, UC-02, UC-03, UC-04 and UC-05
+    before it can answer, and one of them being down is not the same failure as a bad request
+    or a broken database. Retryable, and nothing was written — the services that raise it do
+    so before any write, or after rolling one back.
+
+    ``provider`` names the boundary, not the vendor, so an error body never discloses
+    infrastructure.
+    """
+
+    status_code = 503
+    code = "PROVIDER_UNAVAILABLE"
+    retryable = True
+
+    def __init__(
+        self,
+        provider: str,
+        message: str | None = None,
+        cause: BaseException | None = None,
+    ) -> None:
+        super().__init__(
+            message
+            or (
+                "A system this request depends on is temporarily unavailable. "
+                "Nothing was changed — please try again shortly."
+            ),
+            context={"provider": provider},
+            log_context={"provider": provider, "cause": str(cause) if cause else None},
+        )
+
+
+class UpstreamTimeoutError(AppError):
+    """504 — a dependency was reachable but did not answer in time.
+
+    Deliberately distinct from :class:`ProviderUnavailableError`: a timeout means the request
+    may still be running upstream, so the retry has to be idempotent. Every operation that can
+    raise this is keyed, which is why it is safe to advertise as retryable.
+    """
+
+    status_code = 504
+    code = "UPSTREAM_TIMEOUT"
+    retryable = True
+
+    def __init__(self, provider: str, message: str | None = None) -> None:
+        super().__init__(
+            message
+            or "A system this request depends on did not respond in time. Please try again.",
+            context={"provider": provider},
+            log_context={"provider": provider},
+        )

@@ -9,6 +9,7 @@ Six capabilities, one API, one database, one error envelope:
 * **UC-05 Pass/Fail & Certificate Gating** — ``/api/v1/attempts/{id}/outcome``
 * **UC-06 Detailed Feedback Report** — ``/api/v1/attempts/{id}/feedback``
 * **UC-07 AI Coaching Review Mode** — ``/api/v1/attempts/{id}/coaching/…``
+* **UC-08 Retake Management** — ``/api/v1/quizzes/{id}/retakes`` · ``/api/admin/retakes/…``
 
 Each is a separate module, and every dependency between them crosses a port with exactly one
 adapter behind it:
@@ -24,6 +25,8 @@ adapter behind it:
     UC-06 ──ScoreDetailPort──▶ UC-04 · ──OutcomePort──▶ UC-05 · ──QuestionContentPort──▶ UC-02
     UC-07 ──AttemptProvider──▶ UC-03 · ──ScoringResultProvider──▶ UC-04
           ──FeedbackProvider──▶ UC-06 · ──CoachingLLM──▶ the AI provider (unbound by default)
+    UC-08 ──ConfigurationProvider──▶ UC-01 · ──QuestionBankProvider──▶ UC-02
+          ──AttemptProvider──▶ UC-03 (its one write) · ──history──▶ UC-04/05/06/07
 
 No module imports another's models directly, there is exactly one question bank, and exactly one
 owner of attempts. ``tests/test_architecture.py`` enforces that rather than trusting it.
@@ -57,6 +60,9 @@ from app.modules.feedback.api.router import router as feedback_router
 from app.modules.identity.api import router as identity_router
 from app.modules.question_bank.api.router import question_bank_router
 from app.modules.quiz_configuration.api.router import quiz_configuration_router
+from app.modules.retakes.api.router import retake_admin_router, retakes_router
+from app.modules.retakes.container import RetakeAppContext
+from app.modules.retakes.integration.uc03_adapter import attempt_provider_factory
 from app.modules.scoring.api.router import router as scoring_router
 
 logger = get_logger(__name__)
@@ -111,6 +117,7 @@ def create_app(
     attempt_context: AppContext | None = None,
     results_context: ResultsAppContext | None = None,
     coaching_context: CoachingAppContext | None = None,
+    retake_context: RetakeAppContext | None = None,
 ) -> FastAPI:
     """Build the app.
 
@@ -118,7 +125,7 @@ def create_app(
     database, or a failing submission dispatcher without patching internals. ``results_context``
     does the same for the results chain (UC-04 → UC-05 → UC-06) — a failing certificate service, for
     instance — and ``coaching_context`` for UC-07, whose AI provider is the boundary a test most
-    needs to control.
+    needs to control. ``retake_context`` does the same for UC-08.
     """
     configure_logging()
 
@@ -168,6 +175,18 @@ def create_app(
         session_factory=context.session_factory, clock=context.clock
     )
 
+    # UC-08 is given the same session factory and clock for the same reason, and additionally
+    # UC-03's own context: the one write a retake makes goes *through* UC-03's attempt service
+    # rather than around it, so it needs the fully wired service — the enrolment check, the
+    # configuration lock, the frozen snapshot — and not merely a database handle. Wiring it here
+    # rather than letting UC-08 reach for UC-03's composition root itself keeps the dependency
+    # where ``tests/test_architecture.py`` can see it.
+    app.state.retakes = retake_context or RetakeAppContext(
+        session_factory=context.session_factory,
+        attempts=attempt_provider_factory(context),
+        clock=context.clock,
+    )
+
     # Wire the result chain into UC-03's downstream hand-off, which is the seam its
     # SubmissionDispatchPort was written for. Only when the dispatcher is still the documented no-op
     # default: a caller that supplied its own dispatcher meant it, and silently wrapping it would
@@ -212,6 +231,7 @@ def create_app(
                 "UC-05 Pass/Fail & Certificate Gating",
                 "UC-06 Detailed Feedback Report",
                 "UC-07 AI Coaching Review Mode",
+                "UC-08 Retake Management",
             ],
             "database": "ok" if database_ok else "unreachable",
             "environment": settings.environment,
@@ -239,6 +259,10 @@ def create_app(
     app.include_router(feedback_router, prefix=f"{settings.api_prefix}/v1")
     # UC-07 continues the same conversation: /v1/attempts/{id}/coaching/… and /v1/coaching/…
     app.include_router(coaching_router, prefix=f"{settings.api_prefix}/v1")
+    # UC-08's learner half joins the same versioned conversation — a retake is a new attempt —
+    # while its administrator half sits with UC-01's and UC-02's admin surface.
+    app.include_router(retakes_router, prefix=f"{settings.api_prefix}/v1")
+    app.include_router(retake_admin_router, prefix=f"{settings.api_prefix}/admin/retakes")
 
     logger.info(
         "app.started",

@@ -110,6 +110,27 @@ class Settings(BaseSettings):
     #: Replies longer than this are treated as an invalid model response rather than forwarded.
     coaching_llm_max_output_chars: int = Field(default=4000, ge=200, le=100_000)
 
+    # ---- UC-08 Retake Management ---------------------------------------
+    #: Which immutable configuration version a retake locks. ``ACTIVE_AT_RETAKE`` is UC-03's rule
+    #: for any new attempt and is the default, so a retake behaves exactly like any other attempt.
+    #: ``CARRY_FORWARD_PREVIOUS`` pins it to the version the previous attempt ran under. Either
+    #: way the choice is explicit and recorded on the retake; a version is never switched by
+    #: accident.
+    retake_configuration_policy: str = Field(default="ACTIVE_AT_RETAKE")
+
+    #: Upper bound on a single administrator grant. Not a product rule — a guard against a
+    #: mistyped grant handing a learner a thousand attempts.
+    max_grant_additional_attempts: int = Field(default=10, ge=1, le=100)
+
+    #: Shown to a learner with no attempts left, so the user-facing layer does not invent its own
+    #: wording. Configurable because every deployment names its own contact.
+    exhausted_contact_guidance: str = Field(
+        default=(
+            "You have used all of your attempts for this quiz. "
+            "Contact your course administrator if you need an additional attempt."
+        )
+    )
+
     # ---- Local development convenience ---------------------------------
     #: Seed a brand new local database so the workflow is demonstrable immediately.
     #: Always off under ``ENVIRONMENT=test``.
@@ -131,6 +152,26 @@ class Settings(BaseSettings):
         up front rather than after the learner has typed a question.
         """
         return bool(self.coaching_llm_provider.strip()) and bool(self.coaching_llm_api_key)
+
+    @field_validator("retake_configuration_policy", mode="before")
+    @classmethod
+    def _normalise_retake_policy(cls, value: object) -> object:
+        """Reject an unrecognised policy at start-up rather than at the first retake.
+
+        A typo here would otherwise silently fall back to the default, and the deployment that
+        meant to pin retakes to the previous version would advance them instead — a difference
+        nobody would notice until a learner sat a retake under rules that had changed.
+        """
+        if isinstance(value, str):
+            candidate = value.strip().upper()
+            if candidate == "":
+                return "ACTIVE_AT_RETAKE"
+            if candidate in {"ACTIVE_AT_RETAKE", "CARRY_FORWARD_PREVIOUS"}:
+                return candidate
+            raise ValueError(
+                "retake_configuration_policy must be ACTIVE_AT_RETAKE or CARRY_FORWARD_PREVIOUS."
+            )
+        return value
 
     @property
     def cors_origins(self) -> list[str]:

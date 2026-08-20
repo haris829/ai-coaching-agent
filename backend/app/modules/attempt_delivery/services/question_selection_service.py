@@ -25,6 +25,10 @@ class SelectionResult:
     questions: tuple[BankQuestion, ...]
     #: Per-type counts actually delivered; surfaced for diagnostics and tests.
     type_counts: dict[str, int]
+    #: Ids that were deprioritised but delivered anyway because the eligible pool could not
+    #: fill the paper without them (UC-08 §17). Empty for every non-retake attempt, and empty
+    #: for a retake the bank was large enough to satisfy.
+    reused_question_ids: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +192,15 @@ def _randomise_options(question: BankQuestion, seed: str) -> BankQuestion:
 # ---------------------------------------------------------------------------
 
 
+def _split_by_preference(
+    candidates: Sequence[BankQuestion], deprioritised: frozenset[str]
+) -> tuple[list[BankQuestion], list[BankQuestion]]:
+    """Partition ``candidates`` into (not seen before, seen before), order preserved."""
+    unseen = [question for question in candidates if question.question_id not in deprioritised]
+    seen = [question for question in candidates if question.question_id in deprioritised]
+    return unseen, seen
+
+
 class QuestionSelectionService:
     """Chooses and orders the questions for an attempt."""
 
@@ -198,22 +211,44 @@ class QuestionSelectionService:
         config: QuizConfigurationVersion,
         pool: Sequence[BankQuestion],
         seed: str,
+        *,
+        deprioritised_question_ids: Sequence[str] = (),
     ) -> SelectionResult:
         """Choose the questions for an attempt from ``pool`` according to ``config``.
 
         ``pool`` is expected to already exclude retired questions (the bank does
         this), but the filter is applied again here so a permissive adapter cannot
         leak a retired question into a new attempt.
+
+        ``deprioritised_question_ids`` is UC-08's retake preference: questions this learner
+        has already been shown. It is a **preference, not a filter** — unseen questions are
+        drawn first and the remainder comes from the seen ones, so a bank too small to avoid
+        reuse still produces a full paper rather than a short one. Quotas are honoured within
+        each type, and a retired question is never reached for to avoid reuse, because the
+        pool is still the eligible pool.
+
+        Passing nothing (or a set that no candidate matches) takes the original code path
+        untouched, so every non-retake attempt selects exactly the paper it did before.
         """
         validate_configuration_for_delivery(config)
 
         deliverable = [question for question in pool if is_deliverable(question)]
         quotas = [quota for quota in config.question_type_quotas if quota.count > 0]
 
+        # Narrowed to what is actually deliverable: an id that cannot be drawn anyway is not a
+        # preference, and letting it through would take the retake code path for a selection
+        # that is identical to the ordinary one.
+        deliverable_ids = {question.question_id for question in deliverable}
+        deprioritised = frozenset(
+            question_id
+            for question_id in deprioritised_question_ids
+            if question_id in deliverable_ids
+        )
+
         if quotas:
-            selected = self._select_by_quota(config, deliverable, quotas, seed)
+            selected = self._select_by_quota(config, deliverable, quotas, seed, deprioritised)
         else:
-            selected = self._select_by_count(config, deliverable, seed)
+            selected = self._select_by_count(config, deliverable, seed, deprioritised)
 
         # Presentation order. With randomisation off the order is the pool's
         # deterministic order (quota groups in configured order), so the same
@@ -234,7 +269,15 @@ class QuestionSelectionService:
             key = str(question.type)
             type_counts[key] = type_counts.get(key, 0) + 1
 
-        return SelectionResult(questions=questions, type_counts=type_counts)
+        # Recorded from what was actually delivered, not from what the planner hoped for, so
+        # "reuse was unavoidable" is an observation rather than a prediction.
+        reused = tuple(
+            question.question_id for question in questions if question.question_id in deprioritised
+        )
+
+        return SelectionResult(
+            questions=questions, type_counts=type_counts, reused_question_ids=reused
+        )
 
     def _select_by_quota(
         self,
@@ -242,6 +285,7 @@ class QuestionSelectionService:
         pool: Sequence[BankQuestion],
         quotas: Sequence[object],
         seed: str,
+        deprioritised: frozenset[str] = frozenset(),
     ) -> list[BankQuestion]:
         shortfalls: list[dict[str, object]] = []
         selected: list[BankQuestion] = []
@@ -259,14 +303,15 @@ class QuestionSelectionService:
                     }
                 )
                 continue
-            if config.randomise_question_order:
-                selected.extend(
-                    sample_without_replacement(
-                        candidates, quota_count, make_rng(f"{seed}:quota:{quota_type}")
-                    )
+            selected.extend(
+                self._draw(
+                    candidates,
+                    quota_count,
+                    f"{seed}:quota:{quota_type}",
+                    randomise=config.randomise_question_order,
+                    deprioritised=deprioritised,
                 )
-            else:
-                selected.extend(candidates[:quota_count])
+            )
 
         if shortfalls:
             raise errors.insufficient_questions(
@@ -278,11 +323,49 @@ class QuestionSelectionService:
 
         return selected
 
+    @staticmethod
+    def _draw(
+        candidates: Sequence[BankQuestion],
+        count: int,
+        seed: str,
+        *,
+        randomise: bool,
+        deprioritised: frozenset[str],
+    ) -> list[BankQuestion]:
+        """Take ``count`` questions, preferring ones the learner has not seen.
+
+        With no preference in play this is exactly the original two-line draw, seed string
+        included — which is what makes a non-retake attempt byte-for-byte unchanged. The
+        preference branch draws the unseen pool first and only then tops up from the seen
+        one, each with its own derived seed so the two draws cannot correlate.
+        """
+        if not deprioritised:
+            if randomise:
+                return list(sample_without_replacement(candidates, count, make_rng(seed)))
+            return list(candidates[:count])
+
+        unseen, seen = _split_by_preference(candidates, deprioritised)
+        from_unseen = min(count, len(unseen))
+        shortfall = count - from_unseen
+
+        if randomise:
+            picked = list(
+                sample_without_replacement(unseen, from_unseen, make_rng(f"{seed}:unseen"))
+            )
+            if shortfall:
+                picked.extend(
+                    sample_without_replacement(seen, shortfall, make_rng(f"{seed}:seen"))
+                )
+            return picked
+
+        return list(unseen[:from_unseen]) + list(seen[:shortfall])
+
     def _select_by_count(
         self,
         config: QuizConfigurationVersion,
         pool: Sequence[BankQuestion],
         seed: str,
+        deprioritised: frozenset[str] = frozenset(),
     ) -> list[BankQuestion]:
         allowed = config.allowed_question_types
         candidates = (
@@ -300,8 +383,10 @@ class QuestionSelectionService:
                 allowedQuestionTypes=[str(item) for item in allowed] or None,
             )
 
-        if config.randomise_question_order:
-            return sample_without_replacement(
-                candidates, config.question_count, make_rng(f"{seed}:pool")
-            )
-        return candidates[: config.question_count]
+        return self._draw(
+            candidates,
+            config.question_count,
+            f"{seed}:pool",
+            randomise=config.randomise_question_order,
+            deprioritised=deprioritised,
+        )
