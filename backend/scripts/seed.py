@@ -107,6 +107,20 @@ SEED_USERS = [
     ),
 ]
 
+#: Which cohort each learner belongs to.
+#:
+#: Two learners in **two different** cohorts, on purpose. A cohort is a grouping within a course,
+#: and UC-10's cohort filter is only demonstrable if the seeded population actually partitions:
+#: with everyone in one cohort the filter looks like it does nothing, and with nobody in a cohort
+#: it correctly returns the empty set — which reads to a reviewer as broken.
+#:
+#: The values match the two the integration tests use, so what a reviewer sees on a deployment and
+#: what `verify_e2e` section 32 asserts are the same shape.
+SEED_COHORTS = {
+    "learner@example.com": "cohort-a",
+    "learner2@example.com": "cohort-b",
+}
+
 #: Tokens that must never reach a deployed environment, mapped to the variable that overrides each,
 #: so the refusal can name exactly what to set rather than describing the problem.
 UNSAFE_DEFAULT_TOKENS = {
@@ -194,28 +208,50 @@ def seed_identities(db: Session) -> int:
     return created
 
 
-def seed_enrolments(db: Session, course_id: int) -> int:
-    """Enrol every learner on the course.
+def seed_enrolments(db: Session, course_id: int) -> tuple[int, int]:
+    """Enrol every learner on the course, each in a cohort. Returns ``(created, backfilled)``.
 
     UC-03 refuses to create an attempt for a learner who is not enrolled, so without this the seeded
     world would look configured but be unusable.
+
+    THE COHORT, AND WHY THIS ALSO BACKFILLS
+    ---------------------------------------
+    UC-10 filters analytics by cohort, and it reads the cohort from **this row** rather than from a
+    copy frozen onto the attempt. Two consequences, both deliberate:
+
+    * a learner with no cohort matches no cohort filter — correct, and indistinguishable from a
+      broken filter if *nobody* has one, which is exactly what an earlier version of this seed
+      produced on a deployment;
+    * setting the cohort here makes attempts that were sat **before** it was set filterable too,
+      because the filter joins live. So a redeploy repairs the demonstration rather than only
+      helping the next learner.
+
+    The backfill is narrow on purpose: it fills a cohort that is ``NULL`` and never overwrites one
+    that is set. A cohort somebody chose is not this script's to change.
     """
     created = 0
+    backfilled = 0
     learners = db.scalars(select(User).where(User.role == Role.LEARNER.value)).all()
     for learner in learners:
+        cohort = SEED_COHORTS.get(learner.email)
         key = (str(learner.id), str(course_id))
-        if db.get(Enrolment, key) is not None:
+        existing = db.get(Enrolment, key)
+        if existing is not None:
+            if cohort and existing.cohort_id is None:
+                existing.cohort_id = cohort
+                backfilled += 1
             continue
         db.add(
             Enrolment(
                 learner_id=str(learner.id),
                 course_id=str(course_id),
+                cohort_id=cohort,
                 status=EnrolmentStatus.ACTIVE.value,
             )
         )
         created += 1
     db.flush()
-    return created
+    return created, backfilled
 
 
 def seed_course_and_quizzes(db: Session) -> tuple[int, dict[str, int]]:
@@ -366,7 +402,7 @@ def seed(*, allow_default_tokens: bool | None = None) -> dict[str, Any]:
     with session_scope() as db:
         identities = seed_identities(db)
         course_id, quiz_ids = seed_course_and_quizzes(db)
-        enrolments = seed_enrolments(db, course_id)
+        enrolments, cohorts_backfilled = seed_enrolments(db, course_id)
 
     # A separate session: the question service commits each question itself, so it must not share
     # the transaction that created the course and quizzes.
@@ -379,6 +415,7 @@ def seed(*, allow_default_tokens: bool | None = None) -> dict[str, Any]:
     return {
         "identities": identities,
         "enrolments": enrolments,
+        "cohortsBackfilled": cohorts_backfilled,
         "courseId": course_id,
         "quizIds": quiz_ids,
         "questionsCreated": created,
@@ -393,6 +430,7 @@ def main() -> int:
     print(
         f"\nSeed complete."
         f"\n  identities:    {summary['identities']} created, {summary['enrolments']} enrolled"
+        f"\n  cohorts:       {summary['cohortsBackfilled']} backfilled onto existing enrolments"
         f"\n  course:        {summary['courseId']}"
         f"\n  quizzes:       {summary['quizIds']}"
         f"\n  configured:    {summary['quizzesConfigured'] or 'none (already configured)'}"
