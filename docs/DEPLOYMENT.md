@@ -43,6 +43,35 @@ normalised to `postgresql+psycopg://…` by `Settings`, so the provider's value 
 unchanged. Without that it would fail at engine construction complaining about `psycopg2`, which is
 not a dependency, and the error would look like a packaging problem rather than a URL one.
 
+### PostgreSQL is verified, and it was not free
+
+The schema did **not** work on PostgreSQL when first tried. The migration failed on revision 2 of 9,
+which means a deployment would have failed on its first boot before serving a request. Three classes
+of defect, none visible to any of the 2045 tests — because every test runs on SQLite, and SQLite is
+permissive in exactly the places PostgreSQL is not:
+
+* **eight identifiers over PostgreSQL's 63-character limit** (SQLite has none), up to 93 characters;
+* **sixteen boolean predicates** of the form `answered = 1`, valid on SQLite because it stores
+  booleans as integers, and `operator does not exist: boolean = integer` on PostgreSQL;
+* **server defaults contradicting their column's type**, in both directions.
+
+All are fixed, with the details in [UC11-FINDINGS.md](UC11-FINDINGS.md) (F-21 to F-23). Two gates now
+guard against recurrence:
+
+```bash
+npm test                    # includes tests/test_database_portability.py — six static checks that
+                            # run on SQLite and still catch PostgreSQL-only faults
+npm run verify:postgres -- --database-url "$DATABASE_URL"
+                            # 42 checks against a real server: all nine revisions apply, all eleven
+                            # immutability triggers install, a trigger genuinely refuses an UPDATE,
+                            # the six partial unique indexes are genuinely partial, 146 CHECK
+                            # constraints migrated, all 27 foreign keys are enforced
+```
+
+Point `verify:postgres` at a **scratch** server, not the one holding a reviewer's work — it creates
+and drops its own database, but the server should still be disposable. With no PostgreSQL to hand,
+`--embedded` starts a temporary one (needs `pip install pgserver`).
+
 ---
 
 ## Environment variables
@@ -173,6 +202,10 @@ deployment works. After deploying, walk the journeys:
 Sections 30–34 of `npm run verify:e2e` automate the same journeys against a live server, which is
 where they are checked continuously. Doing them by hand once on the deployed instance is what
 confirms the deployment, not the code.
+
+`npm run verify:deployment -- --base-url <url> --yes` walks all six over HTTP only — 88 checks — and
+is the tool to point at the Railway URL. It reads its credentials from `GET /api/session` when
+`DEMO_IDENTITIES` is on, so pointing it at the deployment is the whole invocation.
 
 ---
 
