@@ -1,0 +1,8 @@
+{"title": "Reporting a Suspicion",
+ "sections": [{"id": "SEC-9", "title": "The Nominated Officer",
+   "text": "PROPRIETARY COMPANY PROSE about internal reporting.",
+   "key_points": ["Suspicion is reported internally first"], "concepts": ["nominated_officer"]}],
+ "concepts": [{"id": "nominated_officer", "name": "Nominated officer", "section_id": "SEC-9",
+   "definition": "The nominated officer receives internal reports of suspicion.",
+   "keywords": ["nominated officer", "mlro", "internal report"]}],
+ "quiz_items": []}

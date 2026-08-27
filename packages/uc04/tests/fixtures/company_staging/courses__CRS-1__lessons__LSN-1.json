@@ -1,0 +1,13 @@
+{"title": "Customer Due Diligence", "revision": "r7",
+ "sections": [{"id": "SEC-1", "title": "Identifying the Client",
+   "text": "PROPRIETARY COMPANY PROSE about establishing client identity.",
+   "key_points": ["Identity must be verified before the retainer begins",
+                  "Verification is risk-based, not one-size-fits-all",
+                  "Records of verification are kept for five years",
+                  "Reliance on a third party does not transfer liability"],
+   "concepts": ["cdd"]}],
+ "concepts": [{"id": "cdd", "name": "Customer due diligence", "section_id": "SEC-1",
+   "definition": "Customer due diligence is the process of identifying and verifying a client before acting.",
+   "keywords": ["due diligence", "cdd", "identity", "verification"]}],
+ "quiz_items": [{"id": "Q-1", "question": "At what point must client identity be verified?",
+   "options": ["a", "b", "c"], "answer": "b", "concept": "cdd"}]}

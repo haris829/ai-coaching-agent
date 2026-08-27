@@ -1,0 +1,208 @@
+/* UC-01 reference UI. Deliberately small: its job is to show that every state the API
+   reports is rendered, including the disabled and degraded ones. */
+
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --border: #d8dce3;
+  --text: #1c2126;
+  --muted: #5b6672;
+  --accent: #1f4e79;
+  --accent-contrast: #ffffff;
+  --warn-bg: #fff6e5;
+  --warn-border: #e0a944;
+  --error-bg: #fdeceb;
+  --error-border: #c0392b;
+  --info-bg: #eaf2fa;
+  --info-border: #7aa7d0;
+  --disabled: #8b949e;
+  --radius: 8px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 1rem 3rem;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+}
+.skip-link:focus {
+  position: static;
+  display: inline-block;
+  margin: 0.5rem 0;
+}
+
+.app-header {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.5rem 0 1rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.app-header h1 { margin: 0; font-size: 1.5rem; }
+.subtitle { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.85rem; }
+
+.badge {
+  margin: 0;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+}
+
+main { max-width: 720px; margin: 0 auto; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  margin-bottom: 1rem;
+}
+.card h2 { margin-top: 0; font-size: 1.15rem; }
+
+.status { color: var(--muted); font-size: 0.9rem; }
+
+.panel {
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  margin: 0.75rem 0;
+  background: var(--surface);
+}
+.panel h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+.panel p { margin: 0.25rem 0; }
+.panel--error { background: var(--error-bg); border-left-color: var(--error-border); }
+.panel--warn { background: var(--warn-bg); border-left-color: var(--warn-border); }
+.panel--info { background: var(--info-bg); border-left-color: var(--info-border); }
+
+.greeting-preview, .greeting {
+  background: var(--info-bg);
+  border-left: 4px solid var(--info-border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem;
+}
+.greeting { font-size: 1.05rem; }
+
+.notices { list-style: none; padding: 0; margin: 0 0 1rem; }
+.notices li {
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.92rem;
+}
+.notices li[data-severity="warning"] { background: var(--warn-bg); border-left-color: var(--warn-border); }
+.notices li[data-severity="info"] { background: var(--info-bg); border-left-color: var(--info-border); }
+.notices li .notice-code { display: block; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+
+.modes { border: 0; padding: 0; margin: 0 0 1rem; }
+.modes legend { font-weight: 600; padding: 0; margin-bottom: 0.5rem; }
+
+.mode {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  cursor: pointer;
+  background: var(--surface);
+}
+.mode:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.mode[data-available="false"] {
+  background: #f1f2f4;
+  color: var(--disabled);
+  cursor: not-allowed;
+}
+.mode__title { font-weight: 600; }
+.mode__reason { display: block; font-size: 0.85rem; color: var(--muted); margin-top: 0.15rem; }
+.mode[data-available="false"] .mode__reason { color: #7a3b12; }
+.mode__status { margin-left: auto; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+
+.picker { margin: 0 0 1rem; display: grid; gap: 0.35rem; }
+.picker label { font-weight: 600; font-size: 0.9rem; }
+.picker select, .dev-grid select {
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font: inherit;
+  max-width: 100%;
+}
+.hint { color: var(--muted); font-size: 0.85rem; margin: 0.2rem 0 0; }
+
+.checkbox { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.5rem 0; font-size: 0.92rem; }
+
+.actions { display: flex; align-items: center; gap: 0.75rem; margin-top: 1rem; }
+
+.btn {
+  font: inherit;
+  padding: 0.55rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--accent);
+  cursor: pointer;
+}
+.btn--primary { background: var(--accent); color: var(--accent-contrast); }
+.btn--secondary { background: var(--surface); color: var(--accent); }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 1rem 0; font-size: 0.92rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-family: ui-monospace, "Cascadia Mono", Menlo, monospace; }
+
+.dev-panel {
+  max-width: 720px;
+  margin: 0 auto 1rem;
+  background: #fffdf5;
+  border: 1px dashed var(--warn-border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+}
+.dev-panel summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+.dev-panel__note { color: var(--muted); font-size: 0.8rem; }
+.dev-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.6rem; margin: 0.6rem 0; }
+.dev-grid label { display: grid; gap: 0.2rem; font-size: 0.8rem; font-weight: 600; }
+
+.app-footer {
+  max-width: 720px;
+  margin: 2rem auto 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+[aria-busy="true"] { opacity: 0.6; }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14181c;
+    --surface: #1c2126;
+    --border: #333c45;
+    --text: #e8eaed;
+    --muted: #a2adb8;
+    --accent: #7aa7d0;
+    --accent-contrast: #10161b;
+    --warn-bg: #33290f;
+    --error-bg: #3a1c19;
+    --info-bg: #16283a;
+  }
+  .mode[data-available="false"] { background: #22272c; }
+  .mode[data-available="false"] .mode__reason { color: #e0a944; }
+  .dev-panel { background: #20211a; }
+}

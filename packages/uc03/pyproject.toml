@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uc03-legal-concept-qa"
+version = "1.0.0"
+description = "UC-03 Legal Concept Q&A - standalone backend use case"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27"]
+llm = ["anthropic>=1.0"]
+
+[tool.setuptools.packages.find]
+include = ["uc03*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning:uc03.*"]
+markers = [
+    "slow: exercises the real 1.5s / 10s company thresholds in real time",
+]

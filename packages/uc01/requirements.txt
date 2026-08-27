@@ -1,0 +1,5 @@
+# UC-01 standalone runtime dependencies.
+# Deliberately minimal: no ORM, no HTTP client, no frontend build chain.
+fastapi>=0.110
+pydantic>=2.6
+uvicorn>=0.27

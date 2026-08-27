@@ -1,0 +1,46 @@
+[project]
+name = "uc05-socratic-coaching"
+version = "1.0.0"
+description = "UC-05 Socratic Method Coaching -- guiding-question dialogue with an explicit state machine"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27", "ruff>=0.4"]
+
+[tool.setuptools.packages.find]
+include = ["uc05*"]
+
+[tool.ruff]
+line-length = 92
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "SIM", "RUF"]
+ignore = [
+    # FastAPI's Depends() in a default argument is the framework's own idiom.
+    "B008",
+    # Multi-line string literals inside tuples are deliberate here: the
+    # alternative is a wall of unreadably long lines.
+    "ISC001", "ISC003",
+    # `in dict.keys()` is used where reading as "is this key registered"
+    # matters more than the micro-optimisation.
+    "SIM118",
+    # The "ambiguous" characters are curly apostrophes, and they are the
+    # point: they are the variants the normaliser folds away so a curly
+    # quote cannot smuggle a praise term past the check.
+    "RUF001",
+    # The stopword table is authored as grouped, commented text and split
+    # at import; a flat list literal would lose the grouping.
+    "SIM905",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The adapter template is a skeleton: its broad except is deliberate and
+# explained inline, and its TODO markers are the point.
+"uc05/adapters/real/_template.py" = ["BLE001"]

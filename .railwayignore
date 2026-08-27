@@ -1,0 +1,11 @@
+# Not needed at runtime. The suites and the archived TypeScript tree stay in the
+# repository; they just are not uploaded to the deployment.
+packages/*/tests/
+packages/*/docs/
+reference/
+docs/
+bench/
+*.md
+.pytest_cache/
+.ruff_cache/
+__pycache__/

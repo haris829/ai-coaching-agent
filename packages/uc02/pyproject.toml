@@ -1,0 +1,33 @@
+[project]
+name = "uc-02-contextual-awareness"
+version = "1.0.0"
+description = "UC-02 Contextual Awareness Setup - assembles a learner's context at session start."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "httpx>=0.27"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+# B008: FastAPI's `Depends(...)` default-argument idiom.
+# UP017: `timezone.utc` is kept for explicitness over the `datetime.UTC` alias.
+ignore = ["B008", "UP017"]
+# UP042: `str, Enum` is kept over `StrEnum`; every log/serialisation site uses
+# `.value` explicitly, so the change would be churn without benefit.
+extend-ignore = ["UP042"]

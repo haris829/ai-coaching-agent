@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uc10-feedback-improvement"
+version = "0.1.0"
+description = "UC-10 Feedback & Improvement: rating capture and content review flagging"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+    "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27", "ruff>=0.5"]
+
+[tool.setuptools.packages.find]
+include = ["uc10*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning:uc10.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Pinned here so lint is reproducible regardless of any developer's global ruff config.
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "DTZ", "RUF", "BLE"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately build naive datetimes to prove they are rejected, and reach into
+# internals to simulate a defective collaborator.
+"tests/*" = ["DTZ001", "DTZ005"]

@@ -1,0 +1,121 @@
+activity-logging.test.ts|progress and activity logging|logs LESSON_LOADED with the identity a future UC needs|1
+activity-logging.test.ts|progress and activity logging|logs CONCEPT_EXPLAINED against user, session, course, lesson and concept|1
+activity-logging.test.ts|progress and activity logging|exposes explained concepts for future gap tracking|1
+activity-logging.test.ts|progress and activity logging|serves explained concepts only to the session owner|1
+activity-logging.test.ts|progress and activity logging|does not write lesson prose into event metadata|1
+activity-logging.test.ts|progress and activity logging|keeps working when the activity repository is completely down|1
+activity-logging.test.ts|progress and activity logging|keeps working when the explanation history store is down|1
+activity-logging.test.ts|progress and activity logging|records events in chronological order with unique ids|1
+adapter-replacement.test.ts|adapter replacement requires no change to UC-04 core|answers from a completely different content source and shape|1
+adapter-replacement.test.ts|adapter replacement requires no change to UC-04 core|keeps enforcing the enrollment guard against the company access service|1
+adapter-replacement.test.ts|adapter replacement requires no change to UC-04 core|keeps quiz protection working with the company adapters|1
+adapter-replacement.test.ts|adapter replacement requires no change to UC-04 core|keeps explain-differently working with the company adapters|1
+adapter-replacement.test.ts|adapter replacement requires no change to UC-04 core|follows a related lesson from the company catalogue|1
+adapter-replacement.test.ts|adapter replacement requires no change to UC-04 core|writes activity into the company event store|1
+api.test.ts|POST /coaching/turns|returns a structured response, not a text blob|1
+api.test.ts|POST /coaching/turns|requires an authenticated principal|1
+api.test.ts|POST /coaching/turns|validates the body|1
+api.test.ts|POST /coaching/turns|allows an explain-differently turn with no question text|1
+api.test.ts|POST /coaching/turns|returns 403 for a session the caller does not own|1
+api.test.ts|POST /coaching/turns|returns 403 and no lesson content for a non-enrolled learner|1
+api.test.ts|POST /coaching/turns|returns 404 for an unknown session|1
+api.test.ts|POST /coaching/turns|ignores client attempts to inject lesson content or override identity|1
+api.test.ts|POST /coaching/turns|cannot have quiz protection switched off by request parameters|1
+api.test.ts|POST /coaching/turns|rejects an oversized question|1
+api.test.ts|POST /coaching/turns|returns the quiz-protected contract shape|1
+api.test.ts|POST /coaching/turns|returns the lesson-unavailable contract shape|1
+api.test.ts|GET /coaching/sessions/:sessionId/explained-concepts|returns explained concepts to the session owner|1
+api.test.ts|GET /coaching/sessions/:sessionId/explained-concepts|refuses another user and unauthenticated callers|1
+api.test.ts|GET /coaching/sessions/:sessionId/explained-concepts|404s an unknown session|1
+api.test.ts|GET /health|reports the use case|1
+enrollment-and-access.test.ts|enrollment guard and session access control|lets an enrolled user load the linked lesson and answer from it|1
+enrollment-and-access.test.ts|enrollment guard and session access control|refuses a non-enrolled user and returns no lesson content|1
+enrollment-and-access.test.ts|enrollment guard and session access control|never calls the lesson content provider before enrollment verification succeeds|1
+enrollment-and-access.test.ts|enrollment guard and session access control|fails closed when the enrollment service is unavailable|1
+enrollment-and-access.test.ts|enrollment guard and session access control|blocks a session that belongs to another user|1
+enrollment-and-access.test.ts|enrollment guard and session access control|rejects a client that asserts a different course or lesson than the session binding|1
+enrollment-and-access.test.ts|enrollment guard and session access control|accepts a matching course/lesson assertion|1
+enrollment-and-access.test.ts|enrollment guard and session access control|returns SESSION_NOT_FOUND for an unknown session|1
+enrollment-and-access.test.ts|enrollment guard and session access control|returns COURSE_NOT_FOUND when the bound course does not exist|1
+explain-differently.test.ts|explain differently|changes the framing on every request|1
+explain-differently.test.ts|explain differently|never repeats an explanation within a session, even past framing exhaustion|1
+explain-differently.test.ts|explain differently|uses every configured framing before reusing any|1
+explain-differently.test.ts|explain differently|falls back to the least recently used framing once all are exhausted|1
+explain-differently.test.ts|explain differently|scopes explanation history to the session|1
+explain-differently.test.ts|explain differently|records every explain-differently request as a difficulty signal|1
+explain-differently.test.ts|explain differently|targets the last explained concept when no question text is supplied|1
+explain-differently.test.ts|explain differently|accepts a valid concept_id hint and ignores an invented one|1
+explain-differently.test.ts|explain differently|works for a general (off-lesson) answer too|1
+explain-differently.test.ts|explanation fingerprinting|produces a stable fingerprint for the same content|1
+explain-differently.test.ts|explanation fingerprinting|ignores reordering and punctuation, which would otherwise fake novelty|1
+explain-differently.test.ts|explanation fingerprinting|flags an exact repeat and a near-duplicate rewording|1
+explain-differently.test.ts|explanation fingerprinting|accepts a genuinely different explanation|1
+explain-differently.test.ts|framing selection policy|offers unused framings first, in preference order|1
+explain-differently.test.ts|framing selection policy|falls back to least-recently-used order once exhausted|1
+lesson-normalizer.test.ts|lesson normalization (internal lesson contract)|normalizes a provider payload into the internal LessonContext|1
+lesson-normalizer.test.ts|lesson normalization (internal lesson contract)|drops a related lesson that is not in the course catalogue|1
+lesson-normalizer.test.ts|lesson normalization (internal lesson contract)|keeps only related lessons present in the catalogue when more are known|1
+lesson-normalizer.test.ts|lesson normalization (internal lesson contract)|rejects a malformed payload instead of inventing content|1
+lesson-normalizer.test.ts|lesson normalization (internal lesson contract)|degrades gracefully when optional structure is missing|1
+lesson-normalizer.test.ts|lesson normalization (internal lesson contract)|drops a concept that does not belong to any real section|1
+lesson-normalizer.test.ts|lesson normalization (internal lesson contract)|unlinks section concept ids that did not survive normalization|1
+lesson-normalizer.test.ts|lesson normalization (internal lesson contract)|ignores a self-referential related lesson|1
+quiz-protection.test.ts|quiz answer protection|[each] blocks the direct request: %s|N
+quiz-protection.test.ts|quiz answer protection|[each] blocks the indirect request: %s|N
+quiz-protection.test.ts|quiz answer protection|[each] does not block the genuine question: %s|N
+quiz-protection.test.ts|quiz answer protection|offers concept help instead of the answer, and names the concept when it can|1
+quiz-protection.test.ts|quiz answer protection|still refuses when the lesson cannot be loaded|1
+quiz-protection.test.ts|quiz answer protection|never leaks an answer through the protected response text|1
+quiz-protection.test.ts|quiz answer protection|logs a QUIZ_PROTECTED activity event carrying no answer material|1
+quiz-protection.test.ts|quiz answer protection|cannot be disabled by anything the caller sends|1
+quiz-protection.test.ts|quiz answer protection|falls back to a safe clarification when the classifier itself fails|1
+quiz-protection.test.ts|uncertain classifications|asks for clarification rather than answering or blocking outright|1
+quiz-protection.test.ts|uncertain classifications|logs a CLARIFICATION_REQUESTED event|1
+quiz-protection.test.ts|false positive logging|records a blocked turn that named a concept the lesson teaches|1
+quiz-protection.test.ts|false positive logging|records an uncertain turn|1
+quiz-protection.test.ts|false positive logging|does not log clean learning questions|1
+quiz-protection.test.ts|false positive logging|stores no lesson content or explanation text|1
+quiz-protection.test.ts|false positive logging|a logging outage does not affect the learner turn|1
+quiz-protection.test.ts|quiz intent classifier (unit)|separates answer seeking from learning intent|1
+quiz-protection.test.ts|quiz intent classifier (unit)|does not give learning credit to a refused explanation|1
+quiz-protection.test.ts|quiz intent classifier (unit)|fires several independent signal families, not one keyword|1
+quiz-protection.test.ts|quiz intent classifier (unit)|treats a server-derived assessment context as a strengthening signal only|1
+quiz-protection.test.ts|quiz intent classifier (unit)|is deterministic|1
+quiz-protection.test.ts|answer leak guard (unit)|removes sentences that would reveal or confirm an answer|1
+quiz-protection.test.ts|answer leak guard (unit)|leaves clean explanations untouched|1
+quiz-protection.test.ts|answer leak guard (unit)|catches elimination and almost-correct phrasing|1
+resilience.test.ts|failure resilience|[each] survives a courses provider failure (%s)|N
+resilience.test.ts|failure resilience|[each] survives an enrollment provider failure (%s), failing closed|N
+resilience.test.ts|failure resilience|[each] survives a lesson content provider failure (%s)|N
+resilience.test.ts|failure resilience|[each] survives a context provider failure (%s), exposing no lesson|N
+resilience.test.ts|failure resilience|survives a retriever that throws|1
+resilience.test.ts|failure resilience|survives every dependency failing at once without throwing|1
+resilience.test.ts|failure resilience|[each] returns no lesson content when the %s is down|N
+resilience.test.ts|failure resilience|handles an empty question on an ASK turn without crashing|1
+resilience.test.ts|failure resilience|handles an explain-differently turn with no prior history|1
+retrieval.test.ts|section and concept retrieval|identifies the section that actually covers the question|1
+retrieval.test.ts|section and concept retrieval|picks the right concept when one section teaches several|1
+retrieval.test.ts|section and concept retrieval|returns no in-lesson match for an off-lesson question|1
+retrieval.test.ts|section and concept retrieval|does not latch onto a section that merely reuses an everyday word|1
+retrieval.test.ts|section and concept retrieval|matches a real related lesson from the same course|1
+retrieval.test.ts|section and concept retrieval|only ever returns sections and concepts present in the supplied lesson|1
+retrieval.test.ts|section and concept retrieval|finds a concept by id and refuses an unknown one|1
+retrieval.test.ts|section and concept retrieval|handles a lesson with no sections without throwing|1
+retrieval.test.ts|section and concept retrieval|is deterministic across repeated calls|1
+scope-and-fallback.test.ts|source scope|marks a lesson-covered answer as LESSON and cites a real section|1
+scope-and-fallback.test.ts|source scope|marks an off-lesson answer as GENERAL and says so plainly|1
+scope-and-fallback.test.ts|source scope|offers the free-form action when a question goes beyond the lesson|1
+scope-and-fallback.test.ts|source scope|does not offer the free-form action for a lesson-covered answer|1
+scope-and-fallback.test.ts|source scope|never fabricates a lesson reference for a general answer|1
+scope-and-fallback.test.ts|source scope|logs an OFF_LESSON_QUESTION event|1
+scope-and-fallback.test.ts|cross-lesson references|answers from a real related lesson in the same course and marks it COURSE|1
+scope-and-fallback.test.ts|cross-lesson references|surfaces only related lessons that exist in the course catalogue|1
+scope-and-fallback.test.ts|cross-lesson references|degrades to GENERAL rather than inventing content when the related lesson will not load|1
+scope-and-fallback.test.ts|lesson unavailable fallback|[each] returns a safe fallback when the lesson is %s|N
+scope-and-fallback.test.ts|lesson unavailable fallback|does not pretend the general fallback came from the lesson|1
+scope-and-fallback.test.ts|lesson unavailable fallback|logs a LESSON_UNAVAILABLE event|1
+scope-and-fallback.test.ts|lesson unavailable fallback|handles a lesson that loads but carries no sections|1
+scope-and-fallback.test.ts|missing learner context|answers normally when the context service has nothing on file for the user|1
+scope-and-fallback.test.ts|missing learner context|answers normally when the learner context call throws|1
+scope-and-fallback.test.ts|missing learner context|adapts the explanation to the learner level when the context service supplies one|1
+scope-and-fallback.test.ts|missing learner context|omits the level-specific coaching line when no level is on file|1

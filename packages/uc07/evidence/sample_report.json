@@ -1,0 +1,241 @@
+{
+  "status": "available",
+  "interactions_completed": 14,
+  "threshold": 10,
+  "interactions_remaining": 0,
+  "report": {
+    "report_id": "gr_fa59e7169dbb4f165badc92faaa98fa6",
+    "generated_at": "2026-03-01T12:00:00Z",
+    "threshold": 10,
+    "source_interaction_count": 14,
+    "report_version": "1.0.0",
+    "analysis_version": "1.0.0",
+    "gaps": [
+      {
+        "topic_tag": "contract_formation",
+        "gap_type": "struggle",
+        "description": "Formation of a binding contract: offer, acceptance, consideration, intention to create legal relations and certainty of terms.",
+        "description_source": "registry",
+        "signals": [
+          "explain_differently",
+          "low_rating"
+        ],
+        "evidence_interaction_ids": [
+          "interaction-101",
+          "interaction-103"
+        ],
+        "evidence": {
+          "basis": "interaction_ids",
+          "interaction_ids": [
+            "interaction-101",
+            "interaction-103"
+          ],
+          "per_signal": [
+            {
+              "signal": "explain_differently",
+              "observed_value": 3,
+              "threshold": 2,
+              "interaction_ids": [
+                "interaction-101",
+                "interaction-103"
+              ]
+            },
+            {
+              "signal": "low_rating",
+              "observed_value": 2,
+              "threshold": 1,
+              "interaction_ids": [
+                "interaction-101",
+                "interaction-103"
+              ]
+            }
+          ]
+        },
+        "recommendations": [
+          {
+            "topic_tag": "contract_formation",
+            "recommendation_type": "lesson",
+            "course_id": "course-contract-essentials",
+            "lesson_id": "lesson-cf-01",
+            "title": "Offer and acceptance"
+          },
+          {
+            "topic_tag": "contract_formation",
+            "recommendation_type": "lesson",
+            "course_id": "course-contract-essentials",
+            "lesson_id": "lesson-cf-02",
+            "title": "Consideration and intention"
+          }
+        ]
+      },
+      {
+        "topic_tag": "land_registration",
+        "gap_type": "struggle",
+        "description": "Registered title, registrable dispositions, overriding interests and the effect of registration on priority.",
+        "description_source": "registry",
+        "signals": [
+          "low_rating"
+        ],
+        "evidence_interaction_ids": [
+          "interaction-301"
+        ],
+        "evidence": {
+          "basis": "interaction_ids",
+          "interaction_ids": [
+            "interaction-301"
+          ],
+          "per_signal": [
+            {
+              "signal": "low_rating",
+              "observed_value": 1,
+              "threshold": 1,
+              "interaction_ids": [
+                "interaction-301"
+              ]
+            }
+          ]
+        },
+        "recommendations": [
+          {
+            "topic_tag": "land_registration",
+            "recommendation_type": "course",
+            "course_id": "course-property-practice",
+            "lesson_id": null,
+            "title": "Property Practice"
+          }
+        ]
+      },
+      {
+        "topic_tag": "negligence",
+        "gap_type": "struggle",
+        "description": "The tort of negligence: duty of care, breach, factual and legal causation, and recoverable loss.",
+        "description_source": "registry",
+        "signals": [
+          "follow_up"
+        ],
+        "evidence_interaction_ids": [
+          "interaction-202",
+          "interaction-203"
+        ],
+        "evidence": {
+          "basis": "interaction_ids",
+          "interaction_ids": [
+            "interaction-202",
+            "interaction-203"
+          ],
+          "per_signal": [
+            {
+              "signal": "follow_up",
+              "observed_value": 2,
+              "threshold": 2,
+              "interaction_ids": [
+                "interaction-202",
+                "interaction-203"
+              ]
+            }
+          ]
+        },
+        "recommendations": [
+          {
+            "topic_tag": "negligence",
+            "recommendation_type": "course",
+            "course_id": "course-tort-foundations",
+            "lesson_id": null,
+            "title": "Tort Foundations"
+          }
+        ]
+      },
+      {
+        "topic_tag": "commercial_drafting",
+        "gap_type": "unexplored",
+        "description": "Drafting and reviewing commercial agreements: structure, risk allocation and boilerplate.",
+        "description_source": "registry",
+        "signals": [
+          "unexplored_speciality"
+        ],
+        "evidence_interaction_ids": [],
+        "evidence": {
+          "basis": "zero_interactions_for_speciality_area",
+          "interaction_ids": [],
+          "per_signal": [
+            {
+              "signal": "unexplored_speciality",
+              "observed_value": 0,
+              "threshold": 0,
+              "interaction_ids": []
+            }
+          ]
+        },
+        "recommendations": [
+          {
+            "topic_tag": "commercial_drafting",
+            "recommendation_type": "course",
+            "course_id": "course-commercial-drafting",
+            "lesson_id": null,
+            "title": "Commercial Drafting"
+          }
+        ]
+      },
+      {
+        "topic_tag": "data_protection",
+        "gap_type": "unexplored",
+        "description": "Lawful bases for processing, data-subject rights and accountability obligations.",
+        "description_source": "registry",
+        "signals": [
+          "unexplored_speciality"
+        ],
+        "evidence_interaction_ids": [],
+        "evidence": {
+          "basis": "zero_interactions_for_speciality_area",
+          "interaction_ids": [],
+          "per_signal": [
+            {
+              "signal": "unexplored_speciality",
+              "observed_value": 0,
+              "threshold": 0,
+              "interaction_ids": []
+            }
+          ]
+        },
+        "recommendations": [
+          {
+            "topic_tag": "data_protection",
+            "recommendation_type": "course",
+            "course_id": "course-data-protection",
+            "lesson_id": null,
+            "title": "Data Protection in Practice"
+          }
+        ]
+      }
+    ],
+    "recommendations": {
+      "status": "available",
+      "resolved_count": 6,
+      "rejected_unresolvable_count": 2,
+      "converted_to_lesson_count": 1,
+      "dropped_already_enrolled_count": 0
+    },
+    "source_statuses": {
+      "interactions": "available",
+      "feedback": "available",
+      "profile": "available",
+      "courses": "available"
+    },
+    "topic_coverage": {
+      "identifiable_topic_areas": 5,
+      "minimum_expected_topic_areas": 3,
+      "sufficient_topic_diversity": true,
+      "topic_areas_in_history": 5
+    },
+    "unexplored_analysis": {
+      "state": "performed",
+      "speciality_status": "available",
+      "speciality_areas_considered": 4,
+      "unexplored_areas_found": 2,
+      "may_be_incomplete": false,
+      "explanation": "Speciality areas were compared against the topic tags present in the learner's interaction history."
+    },
+    "notices": [],
+    "content_fingerprint": "fa59e7169dbb4f165badc92faaa98fa68ce60a284a18f5b9566bbc138747b678"
+  }
+}

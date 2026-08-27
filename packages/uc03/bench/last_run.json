@@ -1,0 +1,46 @@
+{
+  "scenario": {
+    "total_requests": 300,
+    "concurrency": 20,
+    "dependency_latency_ms": {
+      "context_provider": [
+        5,
+        25
+      ],
+      "authority_provider": [
+        20,
+        120
+      ],
+      "answer_generator": [
+        300,
+        1200
+      ],
+      "question_log": [
+        2,
+        10
+      ]
+    },
+    "seed": 20260824
+  },
+  "results": {
+    "count": 300,
+    "min_ms": 0.4,
+    "p50_ms": 712.2,
+    "p90_ms": 1118.3,
+    "p95_ms": 1202.7,
+    "p99_ms": 1299.5,
+    "max_ms": 1323.3,
+    "mean_ms": 676.1,
+    "wall_clock_s": 10.6,
+    "throughput_rps": 28.3
+  },
+  "statuses": {
+    "CLARIFICATION_NEEDED": 34,
+    "OUT_OF_SCOPE": 14,
+    "ANSWERED": 252
+  },
+  "target_p95_ms": 3000,
+  "timeouts": 0,
+  "logged_records": 300,
+  "pass": true
+}

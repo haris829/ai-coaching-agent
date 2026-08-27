@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uc08-learning-streaks"
+version = "1.0.0"
+description = "UC-08 Learning Streaks and Milestones: consecutive-day streaks, milestone badges, weekly summaries."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+# structlog is the platform default. This component uses it when present and
+# falls back to stdlib logging with a JSON formatter when it is not, so nothing
+# in uc08/ depends on which is installed.
+logging = ["structlog>=24.1"]
+dev = ["pytest>=8.0", "pytest-cov>=4.1", "httpx>=0.27"]
+
+[tool.setuptools.packages.find]
+include = ["uc08*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"

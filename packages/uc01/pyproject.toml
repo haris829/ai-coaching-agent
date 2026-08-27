@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uc01-coaching-session-initiation"
+version = "1.0.0"
+description = "Standalone implementation of UC-01 — Coaching Session Initiation"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "pydantic>=2.6",
+    "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[project.urls]
+Documentation = "./docs/DESIGN.md"
+
+[tool.setuptools.packages.find]
+include = ["uc01*"]
+
+[tool.setuptools.package-data]
+"uc01.persistence" = ["migrations/*.sql"]
+"uc01.web" = ["index.html", "static/*"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = [
+    # starlette's TestClient warns about httpx; not something this project controls.
+    "ignore::DeprecationWarning:starlette.*",
+    "ignore:Using `httpx` with `starlette.testclient`:",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "BLE", "S"]
+ignore = [
+    # `assert` is how the tests express expectations.
+    "S101",
+    # UC-01 enums are declared `class X(str, Enum)` rather than `StrEnum` on purpose:
+    # `.value` is always the wire value and `str(member)` keeps the explicit
+    # `X.MEMBER` form in logs and tracebacks. StrEnum would silently change both.
+    "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests and the verification script favour readable literal payloads over wrapping,
+# and their "tokens" are documented development credentials, not secrets.
+"tests/*" = ["S", "B", "E501"]
+"scripts/*" = ["S", "E501"]

@@ -1,0 +1,4 @@
+-r requirements.txt
+# Test tooling. httpx is required by fastapi.testclient.
+pytest>=8.0
+httpx>=0.27

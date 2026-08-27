@@ -1,0 +1,73 @@
+### 1. Full generated report (GET /api/v1/gap-report, scenario struggle_mixed)
+HTTP 200; written to evidence/sample_report.json
+
+### 2. Threshold evidence (0/5/9 vs 10/11/50)
+count=0   status=below_threshold  completed=0   remaining=10  report=None
+count=5   status=below_threshold  completed=5   remaining=5   report=None
+count=9   status=below_threshold  completed=9   remaining=1   report=None
+count=10  status=available        completed=10  remaining=0   report=gr_b4e40965ac2595b5634c050954fa9172
+count=11  status=available        completed=11  remaining=0   report=gr_526d92d6dc6650378703f5e72c643ac1
+count=50  status=available        completed=50  remaining=0   report=gr_9d1942f552ccc3e3c4e1210ff19e9dff
+
+### 3. Determinism (two independent generations, identical inputs)
+fingerprint A = fa59e7169dbb4f165badc92faaa98fa68ce60a284a18f5b9566bbc138747b678
+fingerprint B = fa59e7169dbb4f165badc92faaa98fa68ce60a284a18f5b9566bbc138747b678
+identical objects: True; identical ids: True
+
+### 4. Freshness (report at 10, then an 11th qualifying interaction arrives)
+at 10: id=gr_b4e40965ac2595b5634c050954fa9172 count=10 refreshed=True
+at 11: id=gr_526d92d6dc6650378703f5e72c643ac1 count=11 refreshed=True
+stored current reflects 11 interactions; versions saved: 2
+unchanged source re-request: refreshed=False same_id=True
+source shrinks to 9: status=below_threshold report=None
+
+### 5. Evidence linkage (every gap, every id resolved)
+struggle   contract_formation     signals=['explain_differently', 'low_rating'] evidence=['interaction-101', 'interaction-103'] all_resolve=True
+    signal explain_differently    observed=3 threshold=2 ids=['interaction-101', 'interaction-103']
+    signal low_rating             observed=2 threshold=1 ids=['interaction-101', 'interaction-103']
+    rec    lesson   course=course-contract-essentials lesson=lesson-cf-01
+    rec    lesson   course=course-contract-essentials lesson=lesson-cf-02
+struggle   land_registration      signals=['low_rating'] evidence=['interaction-301'] all_resolve=True
+    signal low_rating             observed=1 threshold=1 ids=['interaction-301']
+    rec    course   course=course-property-practice lesson=None
+struggle   negligence             signals=['follow_up'] evidence=['interaction-202', 'interaction-203'] all_resolve=True
+    signal follow_up              observed=2 threshold=2 ids=['interaction-202', 'interaction-203']
+    rec    course   course=course-tort-foundations lesson=None
+unexplored commercial_drafting    signals=['unexplored_speciality'] evidence=[] all_resolve=True
+    signal unexplored_speciality  observed=0 threshold=0 ids=[]
+    rec    course   course=course-commercial-drafting lesson=None
+unexplored data_protection        signals=['unexplored_speciality'] evidence=[] all_resolve=True
+    signal unexplored_speciality  observed=0 threshold=0 ids=[]
+    rec    course   course=course-data-protection lesson=None
+recommendation summary: resolved=6 rejected_unresolvable=2 converted_to_lesson=1 dropped_already_enrolled=0
+
+### 6. Degraded-source behaviour
+feedback_unavailable     statuses=(available/unavailable/available/available) recs=available    gaps=4 notices=['rating_signal_unavailable']
+feedback_partial         statuses=(available/partial/available/available) recs=available    gaps=4 notices=['rating_signal_partial']
+feedback_empty           statuses=(available/empty/available/available) recs=available    gaps=4 notices=['rating_signal_no_ratings']
+feedback_invalid         statuses=(available/invalid/available/available) recs=available    gaps=4 notices=['rating_signal_invalid']
+profile_unavailable      statuses=(available/available/unavailable/available) recs=available    gaps=3 notices=['speciality_analysis_unavailable']
+profile_partial          statuses=(available/available/partial/available) recs=available    gaps=4 notices=['speciality_analysis_partial']
+profile_invalid          statuses=(available/available/invalid/available) recs=available    gaps=3 notices=['speciality_analysis_invalid']
+profile_no_speciality    statuses=(available/available/empty/available) recs=available    gaps=3 notices=['speciality_analysis_not_possible_no_speciality']
+courses_unavailable      statuses=(available/available/available/unavailable) recs=unavailable  gaps=5 notices=['recommendations_temporarily_unavailable']
+courses_partial          statuses=(available/available/available/partial) recs=partial      gaps=5 notices=['recommendations_partial']
+courses_invalid          statuses=(available/available/available/invalid) recs=unavailable  gaps=5 notices=['recommendations_temporarily_unavailable']
+interactions_partial     statuses=(partial/available/available/available) recs=available    gaps=5 notices=['interaction_source_partial']
+interactions_unavailable raised InteractionSourceUnusable (source_status=unavailable)
+interactions_timeout     raised InteractionSourceUnusable (source_status=unavailable)
+interactions_invalid     raised InteractionSourceUnusable (source_status=invalid)
+
+### 7. Integration swap proof (mock upstream vs foreign upstream)
+mock    report_id=gr_fa59e7169dbb4f165badc92faaa98fa6 fingerprint=fa59e7169dbb4f165badc92faaa98fa68ce60a284a18f5b9566bbc138747b678
+foreign report_id=gr_fa59e7169dbb4f165badc92faaa98fa6 fingerprint=fa59e7169dbb4f165badc92faaa98fa68ce60a284a18f5b9566bbc138747b678
+reports identical: True
+
+### 8. Privacy probes
+no identity header     -> HTTP 401 {"error": {"code": "identity_unresolved", "message": "No server-side learner identity could be resolved for this request."}}
+user_id query param    -> HTTP 400 {"error": {"code": "invalid_request", "message": "This endpoint accepts no request parameters or body.", "details": {"rejected_fields": ["user_id"]}}}
+body supplied          -> HTTP 400 {"error": {"code": "invalid_request", "message": "This endpoint accepts no request parameters or body.", "details": {"rejected_fields": ["body"]}}}
+different learner      -> HTTP 200 {"status": "below_threshold", "interactions_completed": 0, "threshold": 10, "interactions_remaining": 10, "report": null}
+'user_id' key in successful report body: False
+'question' substring anywhere in report body: False
+

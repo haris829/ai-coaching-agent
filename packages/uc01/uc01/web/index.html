@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UC-01 — Coaching Session Initiation</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="app-header">
+    <div>
+      <h1>Coaching session</h1>
+      <p class="subtitle">UC-01 &middot; Session Initiation</p>
+    </div>
+    <p id="mock-badge" class="badge badge--warn" hidden>Development mocks active</p>
+  </header>
+
+  <!-- Development-only panel. The API refuses these controls unless dev mode is on. -->
+  <details class="dev-panel" id="dev-panel" hidden>
+    <summary>Developer controls (mock scenarios)</summary>
+    <p class="dev-panel__note">
+      These controls exist only to exercise every UI state while the real integrations are
+      unavailable. They select mock fixtures; they cannot change identity, authorization,
+      or the recorded NARIC source.
+    </p>
+    <div class="dev-grid">
+      <label>Signed in as
+        <select id="dev-user"></select>
+      </label>
+      <label>NARIC
+        <select id="dev-naric"></select>
+      </label>
+      <label>Courses
+        <select id="dev-courses"></select>
+      </label>
+      <label>Case files
+        <select id="dev-cases"></select>
+      </label>
+      <label>Profile
+        <select id="dev-profile"></select>
+      </label>
+    </div>
+    <button type="button" id="dev-apply" class="btn btn--secondary">Apply scenario</button>
+  </details>
+
+  <main id="main">
+    <!-- Loading / error / status region -->
+    <p id="status" class="status" role="status" aria-live="polite">Loading your coaching session…</p>
+
+    <div id="load-error" class="panel panel--error" hidden>
+      <p id="load-error-text"></p>
+      <button type="button" id="retry-bootstrap" class="btn btn--secondary">Try again</button>
+    </div>
+
+    <section id="setup" class="card" hidden aria-labelledby="setup-heading">
+      <h2 id="setup-heading">Start a session</h2>
+
+      <p id="greeting-preview" class="greeting-preview"></p>
+
+      <!-- Notices: personalisation unavailable, courses unavailable, no case files, … -->
+      <ul id="notices" class="notices" aria-live="polite"></ul>
+
+      <form id="open-form" novalidate>
+        <fieldset class="modes">
+          <legend>Session mode</legend>
+          <div id="mode-list" role="radiogroup" aria-labelledby="setup-heading"></div>
+        </fieldset>
+
+        <div id="course-picker" class="picker" hidden>
+          <label for="course-select">Course</label>
+          <select id="course-select" name="course_id"></select>
+          <label for="lesson-select">Lesson</label>
+          <select id="lesson-select" name="lesson_id"></select>
+          <p id="course-hint" class="hint"></p>
+        </div>
+
+        <div id="case-picker" class="picker" hidden>
+          <label for="case-select">Case file</label>
+          <select id="case-select" name="case_id"></select>
+          <p id="case-hint" class="hint"></p>
+        </div>
+
+        <div id="naric-block" class="panel panel--info" hidden>
+          <h3>NARIC calibration</h3>
+          <p id="naric-summary"></p>
+          <p id="naric-notice"></p>
+          <label id="naric-continue-label" class="checkbox" hidden>
+            <input type="checkbox" id="naric-continue" />
+            Continue without calibration
+          </label>
+        </div>
+
+        <label class="checkbox">
+          <input type="checkbox" id="fallback-free-form" />
+          If the selected mode becomes unavailable, open a free-form session instead
+        </label>
+
+        <div class="actions">
+          <button type="submit" id="start-session" class="btn btn--primary">Start session</button>
+          <span id="submit-status" class="hint" role="status" aria-live="polite"></span>
+        </div>
+      </form>
+    </section>
+
+    <section id="open-error" class="panel panel--error" hidden aria-labelledby="open-error-heading">
+      <h2 id="open-error-heading">We could not open that session</h2>
+      <p id="open-error-text"></p>
+      <p id="open-error-recovery" class="hint"></p>
+      <button type="button" id="open-error-dismiss" class="btn btn--secondary">Back</button>
+    </section>
+
+    <section id="session-view" class="card" hidden aria-labelledby="session-heading">
+      <h2 id="session-heading">Session open</h2>
+      <p id="session-greeting" class="greeting"></p>
+      <ul id="session-notices" class="notices"></ul>
+      <dl id="session-facts" class="facts"></dl>
+      <button type="button" id="new-session" class="btn btn--secondary">Start another session</button>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>
+      Standalone UC-01 project. External integrations are behind adapters; the shipped
+      adapters are development mocks. See <code>docs/</code> for the API contract and
+      adapter replacement guide.
+    </p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

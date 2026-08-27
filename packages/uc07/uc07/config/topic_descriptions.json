@@ -1,0 +1,20 @@
+{
+  "default_template": "Coaching activity shows this learner needs further work on the topic tagged '{topic_tag}'. No description is configured for this tag yet; add one to the topic-description registry.",
+  "descriptions": {
+    "contract_formation": "Formation of a binding contract: offer, acceptance, consideration, intention to create legal relations and certainty of terms.",
+    "contract_terms": "Express and implied terms, incorporation, interpretation and the control of exclusion clauses.",
+    "misrepresentation": "Pre-contractual statements, categories of misrepresentation and the remedies available for each.",
+    "negligence": "The tort of negligence: duty of care, breach, factual and legal causation, and recoverable loss.",
+    "vicarious_liability": "When one party is held liable for the torts of another, including the employment relationship and the close-connection test.",
+    "land_registration": "Registered title, registrable dispositions, overriding interests and the effect of registration on priority.",
+    "trusts_formation": "Creation of express trusts, the three certainties, beneficiary principle and formality requirements.",
+    "criminal_mens_rea": "Fault elements in criminal liability: intention, recklessness, negligence and strict liability.",
+    "evidence_admissibility": "Rules governing the admission of evidence, relevance, hearsay and judicial discretion to exclude.",
+    "civil_procedure": "Case management, statements of case, disclosure, and the procedural stages of a civil claim.",
+    "professional_conduct": "Regulatory duties, conflicts of interest, confidentiality and the duty to the court.",
+    "company_directors_duties": "Statutory duties of directors, conflicts, and the consequences of breach.",
+    "employment_dismissal": "Fair and unfair dismissal, statutory procedures and remedies.",
+    "data_protection": "Lawful bases for processing, data-subject rights and accountability obligations.",
+    "commercial_drafting": "Drafting and reviewing commercial agreements: structure, risk allocation and boilerplate."
+  }
+}

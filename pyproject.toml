@@ -1,0 +1,62 @@
+# AI Coaching Agent - platform root.
+#
+# This file carries platform-level metadata, the union of the ten components'
+# dependencies, and one lint configuration. It deliberately does NOT define a
+# pytest configuration: each package under packages/ keeps its own, and suites
+# are run per package by scripts/test_all.py. See docs/MERGE_NOTES.md for why.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-coaching-agent"
+version = "0.1.0"
+description = "AI Coaching Agent - ten backend components merged into one repository (UC-01 to UC-10)"
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Union of the ten components' runtime dependencies, at the highest floor any
+# one of them asked for. No component asked for anything incompatible.
+dependencies = [
+    "fastapi>=0.115",        # uc03, uc04, uc10 floor; others >=0.110
+    "pydantic>=2.9",         # uc04 floor; others >=2.6 / >=2.7
+    "pydantic-settings>=2.2",
+    "uvicorn>=0.32",         # uc04 floor; others >=0.27 / >=0.29 / >=0.30
+    "structlog>=24.4",       # uc04 floor; uc09, uc10 >=24.1; uc08 optional
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.23",  # uc02, uc03, uc05 run async tests in auto mode
+    "pytest-cov>=4.1",       # uc08
+    "httpx>=0.27",
+    "pypdf>=4",              # uc09 verifies generated PDFs
+    "ruff>=0.5",
+]
+llm = ["anthropic>=1.0"]     # uc03 optional real generator
+
+[project.urls]
+Contract = "./PLATFORM_CONTRACT.md"
+Brief = "./docs/INTEGRATION_BRIEF.md"
+
+# Packages are not installed from this root; each is imported from its own
+# directory (see scripts/test_all.py and docs/MERGE_NOTES.md, "Import model").
+[tool.setuptools]
+packages = []
+
+[tool.ruff]
+line-length = 110          # the loosest of the ten (uc08); no component exceeds it
+target-version = "py311"
+extend-exclude = ["reference"]
+
+[tool.ruff.lint]
+# Intersection of what the ten components selected, so root lint never
+# contradicts a package's own configuration.
+select = ["E", "F", "I", "B", "UP", "RUF"]
+ignore = [
+    "B008",    # FastAPI's Depends() default-argument idiom
+    "UP017",   # timezone.utc kept over the datetime.UTC alias
+    "UP042",   # (str, Enum) kept over StrEnum: .value is used explicitly
+]
