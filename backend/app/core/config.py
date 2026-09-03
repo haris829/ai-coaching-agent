@@ -121,6 +121,9 @@ class Settings(BaseSettings):
     #: never returned by any endpoint. Coaching stays unavailable while it is empty.
     coaching_llm_api_key: str | None = Field(default=None)
     coaching_llm_base_url: str = Field(default="https://api.anthropic.com")
+    #: AWS region, for ``COACHING_LLM_PROVIDER=bedrock``. Ignored by the Anthropic adapter,
+    #: which has no notion of a region.
+    coaching_llm_region: str = Field(default="us-east-1")
     coaching_llm_timeout_seconds: float = Field(default=20.0, gt=0.0, le=300.0)
     coaching_llm_max_output_tokens: int = Field(default=700, ge=64, le=8192)
     #: Replies longer than this are treated as an invalid model response rather than forwarded.

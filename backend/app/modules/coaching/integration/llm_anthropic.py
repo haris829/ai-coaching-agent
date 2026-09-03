@@ -233,20 +233,3 @@ class AnthropicCoachingLLM:
                 "coaching.provider_cooling_off",
                 extra={"failures": self._failures, "cool_off_seconds": COOL_OFF_SECONDS},
             )
-
-
-def build_coaching_llm(settings: Settings, *, clock: Clock | None = None) -> Any | None:
-    """The provider named in configuration, or ``None`` when none is bound.
-
-    ``None`` is the important return value. The composition root then binds
-    ``UnconfiguredCoachingLLM``, which reports coaching as unavailable and raises on generation — so
-    a deployment that has not configured a provider, or has misspelled its name, tells learners the
-    truth instead of serving invented teaching (§6, §27).
-    """
-    if not settings.coaching_provider_configured:
-        return None
-    provider = settings.coaching_llm_provider.strip().lower()
-    if provider != PROVIDER_ANTHROPIC:
-        logger.warning("coaching.unknown_provider", extra={"provider": provider})
-        return None
-    return AnthropicCoachingLLM(settings, clock=clock)

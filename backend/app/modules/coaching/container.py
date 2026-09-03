@@ -18,6 +18,7 @@ Port                          Bound in the merged application to
 ``activity``                  ``qk_coaching_activity``, behind the same port
 ``knowledge_gaps``            ``qk_knowledge_gaps``, behind the same port
 ``llm``                       the AI provider named in configuration, or nothing
+                              (``anthropic`` or ``bedrock`` — see ``integration/llm_factory``)
 ============================  ==========================================================
 
 :class:`CoachingPorts.merged` is that table in code, and the two outbound streams are still ports
@@ -61,7 +62,7 @@ from app.modules.coaching.integration.knowledge_gaps import (
     LoggingKnowledgeGapTracker,
 )
 from app.modules.coaching.integration.llm import CoachingLLM, UnconfiguredCoachingLLM
-from app.modules.coaching.integration.llm_anthropic import build_coaching_llm
+from app.modules.coaching.integration.llm_factory import build_coaching_llm
 from app.modules.coaching.integration.uc03 import (
     AttemptContext,
     AttemptProvider,
