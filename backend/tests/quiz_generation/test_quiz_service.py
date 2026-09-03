@@ -30,6 +30,7 @@ from app.modules.quiz_generation.integration.question_bank import (
 )
 from app.modules.quiz_generation.models import (
     GeneratedQuiz,
+    GeneratedQuizQuestion,
     QuizSubmission,
     SubmittedAnswer,
 )
@@ -429,38 +430,45 @@ class TestMarking:
         with pytest.raises(NotFoundError):
             service.mark("no-such-quiz", {"1": "A"})
 
-    def test_marking_uses_the_database_not_the_submitted_payload(
-        self, service: GeneratedQuizService, db: Session
+    def test_marking_uses_stored_state_not_anything_the_caller_sends(
+        self, service: GeneratedQuizService
     ) -> None:
         """The property that makes a pass mean something.
 
-        A caller can send anything. The key comes from ``qb_question_options``, so rewriting the
-        options in a submission cannot change what is correct.
+        A caller controls the request body entirely. Everything that decides the verdict — which
+        questions were asked, what counted as correct, the pass mark — comes from rows written when
+        the quiz was generated, so no payload can move the line.
+
+        This used to assert that editing ``qb_question_options`` changed the verdict, on the design
+        where marking read the key live from the bank. That design was replaced: the key is frozen
+        onto the quiz, and ``TestTheQuizIsFrozen`` covers why. What survives from the old test is
+        the part that was always the point — the caller cannot decide what is correct.
         """
         view = service.create(topic="Contract formation", count=3)
-        first = view.questions[0]
-        db.execute(
-            text(
-                "UPDATE qb_question_options SET is_correct = 0 "
-                "WHERE question_id = :qid"
-            ),
-            {"qid": first.question_id},
-        )
-        db.execute(
-            text(
-                "UPDATE qb_question_options SET is_correct = 1 "
-                "WHERE question_id = :qid AND label = :label"
-            ),
-            {"qid": first.question_id, "label": "D"},
-        )
-        db.commit()
+        correct = {str(q.sequence): q.answer for q in view.questions}
 
-        result = service.mark(view.quiz_id, {"1": first.answer})
+        # Junk keys, an answer for a question that does not exist, and a fabricated extra field:
+        # none of it is consulted.
+        result = service.mark(
+            view.quiz_id,
+            {**correct, "99": "A", "passMark": "0", "passed": "true", "": "B"},
+        )
 
-        # The answer that was correct at generation is no longer the key in the database, and the
-        # database wins.
-        if first.answer != "D":
-            assert result.answers[0].is_correct is False
+        assert result.total == 3, "only the quiz's own questions are marked"
+        assert result.correct == 3
+        assert result.pass_mark == 50.0
+        assert result.passed is True
+
+    def test_a_caller_cannot_pass_by_sending_a_lower_pass_mark(
+        self, service: GeneratedQuizService
+    ) -> None:
+        view = service.create(topic="Contract formation", count=4, pass_mark=100)
+        half = {str(q.sequence): q.answer for q in view.questions[:2]}
+
+        result = service.mark(view.quiz_id, {**half, "pass_mark": "10"})
+
+        assert result.pass_mark == 100.0
+        assert result.passed is False
 
 
 # ---------------------------------------------------------------------------
@@ -486,3 +494,131 @@ class TestReading:
     ) -> None:
         with pytest.raises(NotFoundError):
             service.find("no-such-quiz")
+
+
+# ---------------------------------------------------------------------------
+# The quiz stores its own MCQs
+# ---------------------------------------------------------------------------
+
+
+class TestTheQuizIsFrozen:
+    """A stored quiz must mean what it meant when it was sat.
+
+    These are the tests for a reversal. Marking used to read the answer key live from UC-02's
+    question bank, on the reasoning that one copy cannot disagree with another. But a bank question
+    can be edited, and with only a reference that edit silently rewrites every quiz that used it —
+    a learner who passed in March could be shown different questions in June, and the answer
+    reported as correct for their submission could be one that was not correct when they sat it.
+    """
+
+    def test_the_stem_options_and_key_are_stored_on_the_quiz(
+        self, service: GeneratedQuizService, db: Session
+    ) -> None:
+        view = service.create(topic="Contract formation", count=3)
+
+        rows = (
+            db.query(GeneratedQuizQuestion)
+            .filter(GeneratedQuizQuestion.quiz_id == view.quiz_id)
+            .order_by(GeneratedQuizQuestion.sequence)
+            .all()
+        )
+        assert len(rows) == 3
+        for row, question in zip(rows, view.questions, strict=True):
+            assert row.question_text == question.question
+            assert row.answer_label == question.answer
+            assert json.loads(row.options_json) == question.options
+
+    def test_editing_the_bank_does_not_change_what_the_quiz_asked(
+        self, service: GeneratedQuizService, db: Session
+    ) -> None:
+        """The property the snapshot exists for."""
+        view = service.create(topic="Contract formation", count=3)
+        original = view.questions[0]
+
+        db.execute(
+            text("UPDATE qb_questions SET question_text = :new WHERE id = :qid"),
+            {"new": "A completely different question?", "qid": original.question_id},
+        )
+        db.commit()
+
+        reread = service.find(view.quiz_id)
+
+        assert reread.questions[0].question == original.question
+        assert reread.questions[0].question != "A completely different question?"
+
+    def test_moving_the_key_in_the_bank_does_not_change_the_verdict(
+        self, service: GeneratedQuizService, db: Session
+    ) -> None:
+        """A learner who answered correctly must not become wrong because someone edited a row."""
+        view = service.create(topic="Contract formation", count=3)
+        answers = {str(q.sequence): q.answer for q in view.questions}
+        first = service.mark(view.quiz_id, answers)
+        assert first.correct == 3
+
+        # Move every correct flag onto a different option in the bank.
+        for question in view.questions:
+            other = next(label for label in "ABCD" if label != question.answer)
+            db.execute(
+                text("UPDATE qb_question_options SET is_correct = 0 WHERE question_id = :qid"),
+                {"qid": question.question_id},
+            )
+            db.execute(
+                text(
+                    "UPDATE qb_question_options SET is_correct = 1 "
+                    "WHERE question_id = :qid AND label = :label"
+                ),
+                {"qid": question.question_id, "label": other},
+            )
+        db.commit()
+
+        again = service.mark(view.quiz_id, answers)
+
+        assert again.correct == 3, "the frozen key must decide, not the edited bank"
+        assert again.passed is True
+
+    def test_a_stored_sitting_still_reports_the_key_it_was_marked_against(
+        self, service: GeneratedQuizService, db: Session
+    ) -> None:
+        view = service.create(topic="Contract formation", count=3)
+        expected = [q.answer for q in view.questions]
+        service.mark(view.quiz_id, {str(q.sequence): q.answer for q in view.questions})
+
+        db.execute(text("UPDATE qb_question_options SET is_correct = 0"))
+        db.commit()
+
+        stored = service.submissions(view.quiz_id)
+
+        assert [answer.correct for answer in stored[0].answers] == expected
+
+    def test_a_question_deleted_from_the_bank_leaves_the_quiz_intact(
+        self, service: GeneratedQuizService, db: Session
+    ) -> None:
+        """The snapshot is what makes the quiz survive its source being removed."""
+        view = service.create(topic="Contract formation", count=3)
+        expected = [q.question for q in view.questions]
+
+        db.execute(text("DELETE FROM qb_question_options"))
+        db.execute(text("DELETE FROM qb_question_topics"))
+        db.execute(text("DELETE FROM qb_question_snapshots"))
+        db.execute(text("DELETE FROM qb_questions"))
+        db.commit()
+
+        reread = service.find(view.quiz_id)
+
+        assert [q.question for q in reread.questions] == expected
+        assert reread.questions[0].options.keys() == {"A", "B", "C", "D"}
+
+    def test_the_question_id_is_kept_as_provenance(
+        self, service: GeneratedQuizService, db: Session
+    ) -> None:
+        """Frozen for authority, linked for review — the bank is still where it gets retired."""
+        view = service.create(topic="Contract formation", count=3)
+
+        row = (
+            db.query(GeneratedQuizQuestion)
+            .filter(GeneratedQuizQuestion.quiz_id == view.quiz_id)
+            .order_by(GeneratedQuizQuestion.sequence)
+            .first()
+        )
+        assert row.question_id == view.questions[0].question_id
+        assert db.get(Question, row.question_id) is not None

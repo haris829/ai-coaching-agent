@@ -43,6 +43,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -102,11 +103,25 @@ class GeneratedQuiz(Base):
 
 
 class GeneratedQuizQuestion(Base):
-    """One question's place in a generated quiz.
+    """One question of a generated quiz, **as it was generated**.
 
-    A reference, not a copy. The text, the options and the answer key live in UC-02's question bank;
-    duplicating them here would create a second version of a question that could disagree with the
-    first.
+    A SNAPSHOT, NOT A REFERENCE
+    ---------------------------
+    The stem, the options and the answer key are copied onto this row. That is a reversal: it began
+    as a bare reference into UC-02's question bank, on the reasoning that one copy of a question
+    cannot disagree with another. That reasoning was wrong, and the trade was the wrong way round.
+
+    A bank question can be edited or retired. With only a reference, editing it silently rewrites
+    every quiz that ever used it and every sitting ever marked against it — a learner who passed in
+    March could be shown different questions in June, and the "correct" answer reported for their
+    submission could be one that was not correct when they sat it. A stored result has to mean what
+    it meant at the time.
+
+    This is the same decision UC-03 and UC-04 already make: an attempt freezes the questions it
+    delivered, and a confirmed result is immutable. A generated quiz is no different.
+
+    ``question_id`` stays, as the link back to the bank — provenance, and the route to review or
+    retire the question. What it no longer is, is the source of truth for *this* quiz.
     """
 
     __tablename__ = f"{TABLE_PREFIX}generated_quiz_questions"
@@ -117,10 +132,22 @@ class GeneratedQuizQuestion(Base):
         ForeignKey(f"{TABLE_PREFIX}generated_quizzes.id", ondelete="CASCADE"),
         nullable=False,
     )
-    #: Soft reference to ``qb_questions.id``.
+    #: Soft reference to ``qb_questions.id`` — provenance, not authority. See the class docstring.
     question_id: Mapped[str] = mapped_column(String(36), nullable=False)
     #: 1-based position, so ``Q1`` in the caller's answer payload means something definite.
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    #: The question as it was asked. Nullable only because rows written before the snapshot existed
+    #: have none; those fall back to the bank, and a fallback is recorded rather than hidden.
+    question_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The options as they were offered: ``{"A": "...", "B": "...", ...}``, JSON-encoded.
+    #:
+    #: JSON in one column rather than a table of option rows. The options of a generated quiz are
+    #: never queried individually — they are read as a set, with the question — so a child table
+    #: would add a join and a migration for no query anyone makes.
+    options_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The correct label at the time of generation. **This is what marking uses.**
+    answer_label: Mapped[str | None] = mapped_column(String(4), nullable=True)
 
     quiz: Mapped[GeneratedQuiz] = relationship(back_populates="questions")
 
@@ -208,9 +235,10 @@ class SubmittedAnswer(Base):
     marked incorrect. Recording the absence is the point — a row per question means the stored
     sitting accounts for every question asked, so nobody can later argue a question was never put.
 
-    The correct label is deliberately **not** copied here. It lives on the question in UC-02's bank,
-    which is where marking reads it from; a second copy could disagree with the first, and the one
-    that disagreed would be the one somebody quoted.
+    The correct label is not copied here either, and this time for a reason that holds: it is on
+    :class:`GeneratedQuizQuestion`, frozen when the quiz was generated. That row is the authority
+    for what this quiz asked and what counted as right, so a submission needs only to record what
+    was given and how it was marked.
     """
 
     __tablename__ = f"{TABLE_PREFIX}submitted_answers"

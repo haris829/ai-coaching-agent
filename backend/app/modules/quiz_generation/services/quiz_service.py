@@ -22,10 +22,27 @@ cannot pass one part of this system and fail the other on the same score.
 **An unanswered question is wrong, not skipped.** There is no attempt state here to distinguish
 "ran out of time" from "did not know", so a missing answer scores zero. Marking it as absent would
 let a caller improve their percentage by omitting the questions they were unsure of.
+
+MARKING READS THE QUIZ, NOT THE QUESTION BANK
+---------------------------------------------
+The stem, the options and the answer key are frozen onto the quiz when it is generated, and marking
+uses that. It is worth saying why, because this file previously did the opposite and the opposite
+was wrong.
+
+Reading the key live from UC-02 means one copy of a question and no chance of two copies
+disagreeing — which sounds right until a question is edited. Then every quiz that used it is
+silently rewritten, and every sitting ever marked against it now reports a "correct" answer that
+was not correct when the learner sat it. A stored result has to mean what it meant at the time.
+UC-03 freezes the questions it delivered and UC-04 makes a confirmed result immutable for this
+exact reason; a generated quiz gets the same treatment.
+
+The question bank is still where a question is reviewed, edited and retired. It is simply not the
+authority on what *this* quiz asked.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -169,9 +186,18 @@ class GeneratedQuizService:
         self._session.add(quiz)
         self._session.flush()
         for sequence, question_id in enumerate(outcome.question_ids, start=1):
+            # Read the question back from the bank and freeze it onto the quiz. Read rather than
+            # taken from the generation result on purpose: this is the question as UC-02's
+            # validator actually stored it, which is what a learner would have been shown.
+            detail = self._view.read(question_id)
             self._session.add(
                 GeneratedQuizQuestion(
-                    quiz_id=quiz.id, question_id=question_id, sequence=sequence
+                    quiz_id=quiz.id,
+                    question_id=question_id,
+                    sequence=sequence,
+                    question_text=detail.question_text if detail else None,
+                    options_json=json.dumps(detail.options) if detail else None,
+                    answer_label=detail.answer_label if detail else None,
                 )
             )
         self._session.commit()
@@ -294,6 +320,11 @@ class GeneratedQuizService:
             .where(QuizSubmission.quiz_id == quiz.id)
             .order_by(QuizSubmission.submitted_at.desc())
         ).all()
+        # One lookup of the quiz's own keys, shared by every sitting, rather than a bank read per
+        # answer per sitting.
+        keys = {
+            question.sequence: question.answer for question in self._questions(quiz.id)
+        }
         return tuple(
             ResultView(
                 submission_id=row.id,
@@ -308,8 +339,9 @@ class GeneratedQuizService:
                         sequence=answer.sequence,
                         question_id=answer.question_id,
                         given=answer.given_label,
-                        # Read from the bank, so a stored sitting cannot disagree with the key.
-                        correct=self._key(answer.question_id),
+                        # From the quiz's frozen snapshot, so a stored sitting reports the answer
+                        # that was correct when it was sat.
+                        correct=keys.get(answer.sequence, "?"),
                         is_correct=answer.is_correct,
                     )
                     for answer in row.answers
@@ -318,9 +350,6 @@ class GeneratedQuizService:
             for row in rows
         )
 
-    def _key(self, question_id: str) -> str:
-        detail = self._view.read(question_id)
-        return detail.answer_label if detail else "?"
 
     # ---- internals --------------------------------------------------------
 
@@ -345,6 +374,13 @@ class GeneratedQuizService:
         return quiz
 
     def _questions(self, quiz_id: str) -> tuple[QuizQuestionView, ...]:
+        """The quiz's questions as it asked them.
+
+        From the frozen snapshot on each row, so a later edit to the bank cannot change what this
+        quiz was. Rows written before the snapshot existed have none, and those fall back to the
+        bank — the only case where a bank edit still shows through, and it applies to a handful of
+        rows from before this changed rather than to anything generated since.
+        """
         rows = self._session.scalars(
             select(GeneratedQuizQuestion)
             .where(GeneratedQuizQuestion.quiz_id == quiz_id)
@@ -352,19 +388,45 @@ class GeneratedQuizService:
         ).all()
         views: list[QuizQuestionView] = []
         for row in rows:
-            detail = self._view.read(row.question_id)
-            if detail is None:
-                # The question was hard-deleted from the bank. Skipping keeps the quiz markable on
-                # what remains rather than failing the whole read.
+            view = self._frozen(row) or self._from_bank(row)
+            if view is None:
+                # No snapshot and the question is gone from the bank. Skipping keeps the quiz
+                # markable on what remains rather than failing the whole read.
                 continue
-            views.append(
-                QuizQuestionView(
-                    sequence=row.sequence,
-                    question_id=row.question_id,
-                    question=detail.question_text,
-                    options=detail.options,
-                    answer=detail.answer_label,
-                    explanation=detail.explanation,
-                )
-            )
+            views.append(view)
         return tuple(views)
+
+    @staticmethod
+    def _frozen(row: GeneratedQuizQuestion) -> QuizQuestionView | None:
+        """The question as the quiz froze it, or ``None`` if this row predates the snapshot."""
+        if not row.question_text or not row.answer_label or not row.options_json:
+            return None
+        try:
+            options = json.loads(row.options_json)
+        except ValueError:  # pragma: no cover - would mean a corrupted row
+            return None
+        if not isinstance(options, dict) or not options:
+            return None
+        return QuizQuestionView(
+            sequence=row.sequence,
+            question_id=row.question_id,
+            question=row.question_text,
+            options={str(k): str(v) for k, v in options.items()},
+            answer=row.answer_label,
+            # Not frozen: an explanation is read after the fact and is the bank's current best
+            # wording, not part of what was asked. Nothing is marked against it.
+            explanation=None,
+        )
+
+    def _from_bank(self, row: GeneratedQuizQuestion) -> QuizQuestionView | None:
+        detail = self._view.read(row.question_id)
+        if detail is None:
+            return None
+        return QuizQuestionView(
+            sequence=row.sequence,
+            question_id=row.question_id,
+            question=detail.question_text,
+            options=detail.options,
+            answer=detail.answer_label,
+            explanation=detail.explanation,
+        )
