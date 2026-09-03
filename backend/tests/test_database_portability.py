@@ -248,3 +248,45 @@ def test_the_migrations_carry_no_type_contradicting_default() -> None:
     assert offenders == [], (
         "these migration literals would fail on PostgreSQL:\n  " + "\n  ".join(offenders)
     )
+
+
+def test_no_migration_compares_a_boolean_with_an_integer_in_raw_sql() -> None:
+    """``WHERE is_correct = 1`` is valid SQLite and invalid PostgreSQL.
+
+    The checks above cover CHECK constraints, server defaults and partial-index predicates — every
+    place a boolean/integer comparison can be *declared*. They do not cover raw SQL inside a
+    migration body, and that is where one got through: a backfill written and tested against SQLite
+    would have failed the first time it ran on PostgreSQL, with the upgrade half-applied.
+
+    A boolean column is tested for truthiness directly (``AND is_correct``) or against
+    ``true``/``false``. Never against ``1`` or ``0``.
+    """
+    from pathlib import Path
+
+    booleans = _boolean_columns()
+    every_boolean = {name for names in booleans.values() for name in names}
+    offenders: list[str] = []
+
+    versions = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    for path in sorted(versions.glob("*.py")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith("--"):
+                continue
+            for column in every_boolean:
+                for operator in ("=", "!=", "<>"):
+                    for value in ("0", "1"):
+                        for spacing in (
+                            f"{column} {operator} {value}",
+                            f"{column}{operator}{value}",
+                        ):
+                            if spacing in stripped:
+                                offenders.append(
+                                    f"{path.name}:{number} boolean {column!r} compared with "
+                                    f"{value} — PostgreSQL rejects this"
+                                )
+
+    assert offenders == [], (
+        "a migration compares a boolean column with an integer in raw SQL, which PostgreSQL "
+        "rejects with 'operator does not exist: boolean = integer': " + str(sorted(set(offenders)))
+    )

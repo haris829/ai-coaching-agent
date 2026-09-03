@@ -258,3 +258,57 @@ Stated plainly, because a review is the moment to disagree with it.
 5. **One database, no read replica, no caching layer.** None of the ten capabilities needs one at
    review scale. UC-10's analytics reads through a projection whose implementation is a single line
    to change (`AnalyticsPorts.merged()`) if it ever does.
+
+---
+
+## Moving to PostgreSQL
+
+One environment variable. Nothing in the application knows which engine it is talking to: every
+table is declared in SQLAlchemy, every schema change is an Alembic migration, and the portability
+gates in `tests/test_database_portability.py` fail the build on the SQLite-only patterns that would
+otherwise only surface on the first PostgreSQL deploy.
+
+```bash
+DATABASE_URL=postgresql+psycopg://user:password@host:5432/dbname
+```
+
+`postgres://`, `postgresql://` and `postgresql+psycopg2://` are all normalised to
+`postgresql+psycopg://` — see `app/core/config.py`. Managed providers hand out the first form, and
+SQLAlchemy would otherwise read it as an unknown dialect.
+
+### Verified, not assumed
+
+Run against a real PostgreSQL 17 with nothing changed but the URL:
+
+| | Result |
+|---|---|
+| All 12 migrations, empty database → head | clean, `Context impl PostgresqlImpl` |
+| Start-up on an empty database | schema created and demo identities seeded, `autoSeeded: true` |
+| Second start-up | `autoSeeded: false` — idempotent, existing users untouched |
+| Generate a quiz | 6 of 6 stored, 0 rejected |
+| Learner reads the quiz | no `answer` or `explanation` field present |
+| Mark 4 of 6 | `PASS 66.67%`, verdict and score only |
+| Stored submissions | 1 sitting, 6 answer rows, keys frozen |
+| Learner reads the answer key | 403 |
+| Generate again, same topic | 0 repeated questions |
+
+One bug was found by doing this rather than by reasoning about it: a backfill in the
+`c3f81a4e2b70` migration compared a `BOOLEAN` column with `1`. SQLite accepts that silently;
+PostgreSQL fails with `operator does not exist: boolean = integer`, which would have left an
+upgrade half-applied on the first real deploy. Fixed, and
+`test_no_migration_compares_a_boolean_with_an_integer_in_raw_sql` now fails the build if it comes
+back.
+
+### Seeding a fresh database
+
+`AUTO_SEED=true` seeds the demo identities on a database that has none. It refuses to act unless
+`DEMO_IDENTITIES` is also on and the environment is not production, it never touches a database
+that already has users, and `scripts/seed.py` independently refuses to write the published default
+tokens outside development. To seed by hand instead:
+
+```bash
+python -m scripts.seed
+```
+
+**Set `SEED_ADMIN_TOKEN` and the other seed tokens to values you generated** before any deployment
+anyone else can reach. The defaults are in this repository.

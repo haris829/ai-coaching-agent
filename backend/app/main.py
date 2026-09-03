@@ -51,7 +51,7 @@ from sqlalchemy import text
 
 from app import __version__
 from app.composition import ResultsAppContext, ResultsPipeline
-from app.core.config import settings
+from app.core.config import Settings, settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.db.session import engine
@@ -337,6 +337,8 @@ def create_app(
     if dist is not None:
         mount_frontend(app, dist)
 
+    seeded = _auto_seed_if_empty(settings)
+
     logger.info(
         "app.started",
         extra={
@@ -345,9 +347,74 @@ def create_app(
             "database": "sqlite" if settings.is_sqlite else "server",
             "frontend": "served" if dist is not None else "api-only",
             "demoIdentities": settings.demo_identities,
+            "autoSeeded": seeded,
         },
     )
     return app
+
+
+def _auto_seed_if_empty(settings: Settings) -> bool:
+    """Seed the demo identities on a database that has none, if this deployment allows it.
+
+    WHY THIS EXISTS
+    ---------------
+    ``AUTO_SEED`` was a declared setting, documented in ``.env.example``, set to ``true``, and read
+    by nothing. A fresh database therefore came up with no users at all, so every request was a 401
+    and the cause was invisible — the configuration said seeding was on. Pointing a deployment at a
+    new PostgreSQL database looked like a broken build rather than a missing step.
+
+    THREE GUARDS, AND WHY EACH ONE
+    ------------------------------
+    Seeding creates accounts whose bearer tokens come from configuration and, by default, are
+    literally ``admin-token``. That is fine on a laptop and a serious hole anywhere else, so:
+
+    * ``auto_seed`` must be on — the operator has to ask for it;
+    * ``demo_identities`` must be on — the switch that already governs whether demo accounts exist
+      at all, so this cannot introduce them behind that switch's back;
+    * the environment must not be production — belt and braces, because the first two are
+      environment variables and environment variables get copied between deployments.
+
+    And it only ever runs against an **empty** identity table. It never adds to, alters or resets an
+    existing set of users, so it cannot overwrite real accounts even if every guard were wrong.
+
+    Failure is logged and swallowed. A seeding problem must not stop the application starting:
+    the operator can run ``python -m scripts.seed`` and see the real error, whereas a crash at
+    import time gives them a stack trace instead of an API.
+    """
+    if not (settings.auto_seed and settings.demo_identities):
+        return False
+    if settings.environment.strip().lower().startswith("prod"):
+        logger.warning("app.auto_seed_refused", extra={"reason": "PRODUCTION_ENVIRONMENT"})
+        return False
+
+    try:
+        from sqlalchemy import func, select
+
+        from app.db.session import SessionLocal
+        from app.modules.identity.models import User
+
+        try:
+            with SessionLocal() as session:
+                if session.scalar(select(func.count()).select_from(User)):
+                    return False
+        except Exception:  # noqa: BLE001 - a missing table *is* an empty user list
+            # A brand-new database has no schema yet, so the count raises rather than returning
+            # zero. That is the main case this function exists for, so it must not be mistaken for
+            # a failure. `seed()` creates the schema itself before inserting anything.
+            pass
+
+        from scripts.seed import seed  # noqa: PLC0415 - only needed on an empty database
+
+        seed()
+    except Exception as error:  # noqa: BLE001 - seeding must never stop the app starting
+        logger.warning(
+            "app.auto_seed_failed",
+            extra={"reason": type(error).__name__},
+        )
+        return False
+
+    logger.info("app.auto_seeded", extra={"environment": settings.environment})
+    return True
 
 
 app = create_app()
