@@ -48,6 +48,25 @@ SINGLE_CHOICE_OPTION_COUNT = len(OPTION_LABELS)
 #: fortune in one call and produce a quiz nobody will read.
 MAX_QUESTIONS_PER_REQUEST = 50
 
+#: Distinct angles to ask from, one per concurrent batch.
+#:
+#: A large request is split into several smaller ones that run at the same time, and identical
+#: prompts would then produce near-identical questions — five batches all opening with the most
+#: obvious point in the syllabus, most of them thrown away as duplicates. Giving each batch a
+#: different angle is what makes the split worth doing.
+#:
+#: The angles are not arbitrary. They are the five things a professional assessment actually has to
+#: test: can you apply it, do you know the numbers, do you know when it does not apply, do you know
+#: the procedure, and do you know what happens when it goes wrong. A paper covering all five is a
+#: better paper than one covering the first.
+ANGLES: tuple[str, ...] = (
+    "applying the rules to a short factual scenario",
+    "the precise thresholds, time limits, and definitions",
+    "exceptions, and the situations where the general rule does not apply",
+    "procedure — who must do what, and in what order",
+    "consequences — remedies, sanctions, and what follows from getting it wrong",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class CourseBrief:
@@ -137,13 +156,17 @@ Return ONLY a JSON object, no prose before or after it:
 """.strip()
 
 
-def build_prompt(brief: CourseBrief, count: int) -> str:
+def build_prompt(brief: CourseBrief, count: int, *, angle: str | None = None) -> str:
     """The instruction sent to the model.
 
     Everything the model is told about the course comes from ``brief``. There is deliberately no
     instruction to "use your knowledge of the subject": the model will anyway, and pretending
     otherwise would obscure where the questions actually come from. What the brief does is aim that
     knowledge at the right subject and the right level.
+
+    ``angle`` narrows what this particular batch should test — see :data:`ANGLES`. It is optional
+    because a single small request needs no angle at all; it exists so that several batches running
+    at once do not all write the same questions.
     """
     lines = [f"Course: {brief.name}"]
     if brief.rqf_level is not None:
@@ -157,9 +180,11 @@ def build_prompt(brief: CourseBrief, count: int) -> str:
         lines.append("Modules covered:")
         lines.extend(f"  - {title}" for title in brief.modules[:30])
 
+    focus = f"\n\nFor these questions, focus on {angle}." if angle else ""
     return (
         f"Write {count} multiple-choice questions for the following course.\n\n"
         + "\n".join(lines)
+        + focus
         + "\n\n"
         + _RULES
     )
