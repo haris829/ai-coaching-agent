@@ -7,6 +7,7 @@ import { AnalyticsPage } from './pages/AnalyticsPage';
 import { AttemptPage } from './pages/AttemptPage';
 import { AttemptReportPage } from './pages/AttemptReportPage';
 import { FormalAssessmentPage } from './pages/FormalAssessmentPage';
+import { GeneratedQuizPage } from './pages/GeneratedQuizPage';
 import { ImportPage } from './pages/ImportPage';
 import { LearnerRulesPage } from './pages/LearnerRulesPage';
 import { QuestionFormPage } from './pages/QuestionFormPage';
@@ -59,6 +60,9 @@ export function App(): ReactNode {
             <NavLink to="/attempt" className={({ isActive }) => (isActive ? 'active' : '')}>
               Take a quiz
             </NavLink>
+            <NavLink to="/generate" className={({ isActive }) => (isActive ? 'active' : '')}>
+              Quiz generator
+            </NavLink>
             <NavLink to="/reports" className={({ isActive }) => (isActive ? 'active' : '')}>
               Attempt reports
             </NavLink>
@@ -92,6 +96,7 @@ export function App(): ReactNode {
 
           {/* UC-03 — Quiz Attempt Delivery */}
           <Route path="/attempt" element={<AttemptPage />} />
+          <Route path="/generate" element={<GeneratedQuizPage />} />
           <Route path="/reports/:attemptRef" element={<AttemptReportPage />} />
 
           {/* UC-08 — Retake Management (eligibility, attempt history, administrator grants) */}

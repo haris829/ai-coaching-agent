@@ -55,6 +55,12 @@ import type {
   ResultResponse,
 } from './resultTypes';
 import type {
+  GenerateQuizInput,
+  GeneratedQuiz,
+  QuizResult,
+  SittableQuiz,
+} from './quizGenerationTypes';
+import type {
   CoachingEligibility,
   CoachingExchange,
   CoachingMode,
@@ -990,5 +996,42 @@ export const analytics = {
     filters: AnalyticsFilters = {},
   ): string {
     return `${ANALYTICS}/exports/${kind}.csv${query({ ...filters })}`;
+  },
+};
+
+/**
+ * The generate-and-mark contract (`/v1/generated-quizzes`).
+ *
+ * Four calls, and which of them can see an answer key is a backend rule, not a convention here:
+ * `generate` and `answers` require an administrator token and return keys; `read` and `submit` are
+ * what a learner uses and never carry one.
+ */
+export const generatedQuizzes = {
+  /** Generate a quiz. Administrator only — it spends a model call and writes into the bank. */
+  generate(input: GenerateQuizInput): Promise<GeneratedQuiz> {
+    return json(`${V1}/generated-quizzes`, 'POST', input);
+  },
+
+  /** The quiz as it is sat. No answer key in the response. */
+  read(quizId: string): Promise<SittableQuiz> {
+    return get(`${V1}/generated-quizzes/${encodeURIComponent(quizId)}`);
+  },
+
+  /**
+   * Mark answers and get a verdict.
+   *
+   * `answers` is keyed by position — `"1"`, or `"Q1"` — or by question id. A question left out is
+   * marked wrong, because there is no attempt state here to tell "ran out of time" from
+   * "did not know".
+   */
+  submit(quizId: string, answers: Record<string, string>): Promise<QuizResult> {
+    return json(`${V1}/generated-quizzes/${encodeURIComponent(quizId)}/results`, 'POST', {
+      answers,
+    });
+  },
+
+  /** Read the answer key back. Administrator only. */
+  answers(quizId: string): Promise<GeneratedQuiz> {
+    return get(`${V1}/generated-quizzes/${encodeURIComponent(quizId)}/answers`);
   },
 };
