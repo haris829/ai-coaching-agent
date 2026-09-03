@@ -24,6 +24,7 @@ from app.modules.quiz_generation.integration.question_bank import (
     QuestionBankSink,
     QuestionBankView,
 )
+from app.modules.quiz_generation.models import QuizSubmission, SubmittedAnswer
 from app.modules.quiz_generation.services.quiz_service import GeneratedQuizService
 from tests.harness import ADMIN_TOKEN, LEARNER_TOKEN, auth
 
@@ -205,13 +206,18 @@ class TestTheAnswerKeyStaysOnTheServer:
         # Belt and braces: no key anywhere in the serialised body, under any field name.
         assert '"answer"' not in response.text
 
-    def test_the_marking_response_never_says_what_the_right_answer_was(
+    def test_the_marking_response_says_nothing_about_individual_answers(
         self, api: TestClient
     ) -> None:
-        """Otherwise this route is an answer-key oracle.
+        """The learner is told the verdict, not their answers.
 
-        Submit rubbish, read the corrections, submit again and pass. `isCorrect` is all a marking
-        response needs.
+        Two separate reasons, and both matter. Per-question corrections would make this route an
+        answer-key oracle — submit twenty guesses, read which were wrong, submit again and pass.
+        And the company's contract is ``Response {Pass / Fail}``: the learner is not told their
+        answers at all.
+
+        ``correct`` survives as a *count*, because a percentage means nothing without it. A count
+        does not say which questions it refers to.
         """
         quiz_id = _generate(api)["quizId"]
 
@@ -222,9 +228,19 @@ class TestTheAnswerKeyStaysOnTheServer:
         )
 
         assert response.status_code == 200
-        for answer in response.json()["answers"]:
-            assert set(answer) == {"sequence", "questionId", "given", "isCorrect"}
-        assert '"correct":"' not in response.text.replace(" ", "")
+        body = response.json()
+        assert "answers" not in body, "the learner must not be told their own answers"
+        assert set(body) == {
+            "submissionId",
+            "quizId",
+            "total",
+            "correct",
+            "percentage",
+            "passMark",
+            "passed",
+            "outcome",
+        }
+        assert '"answer"' not in response.text
 
     def test_a_learner_may_not_read_the_answer_key(self, api: TestClient) -> None:
         quiz_id = _generate(api)["quizId"]
@@ -318,6 +334,72 @@ class TestResults:
 
         assert response.status_code == 200
         assert response.json()["outcome"] == "FAIL"
+
+    def test_the_sitting_is_stored_and_readable_by_an_administrator(
+        self, api: TestClient, db: Session
+    ) -> None:
+        """The detail withheld from the learner is recorded, not discarded."""
+        generated = _generate(api)
+        answers = {
+            f"Q{question['sequence']}": question["answer"]
+            for question in generated["questions"][:2]
+        }
+
+        verdict = api.post(
+            f"/api/v1/generated-quizzes/{generated['quizId']}/results",
+            json={"answers": answers},
+            headers=auth(LEARNER_TOKEN),
+        ).json()
+
+        stored = db.query(QuizSubmission).all()
+        assert len(stored) == 1
+        assert stored[0].id == verdict["submissionId"]
+        assert stored[0].correct == 2
+        assert stored[0].total == QUESTION_COUNT
+        # One row per question asked, including the two never answered.
+        assert len(db.query(SubmittedAnswer).all()) == QUESTION_COUNT
+        unanswered = [row for row in stored[0].answers if row.given_label is None]
+        assert len(unanswered) == QUESTION_COUNT - 2
+        assert all(row.is_correct is False for row in unanswered)
+
+    def test_an_administrator_reads_the_full_detail_back(self, api: TestClient) -> None:
+        generated = _generate(api)
+        answers = {
+            f"Q{question['sequence']}": question["answer"]
+            for question in generated["questions"]
+        }
+        api.post(
+            f"/api/v1/generated-quizzes/{generated['quizId']}/results",
+            json={"answers": answers},
+            headers=auth(LEARNER_TOKEN),
+        )
+
+        response = api.get(
+            f"/api/v1/generated-quizzes/{generated['quizId']}/submissions",
+            headers=auth(ADMIN_TOKEN),
+        )
+
+        assert response.status_code == 200
+        submissions = response.json()["submissions"]
+        assert len(submissions) == 1
+        detail = submissions[0]["answers"]
+        assert len(detail) == QUESTION_COUNT
+        # This is the one shape that pairs the given answer with the correct one.
+        assert set(detail[0]) == {"sequence", "questionId", "given", "correct", "isCorrect"}
+        assert [row["correct"] for row in detail] == [
+            question["answer"] for question in generated["questions"]
+        ]
+
+    def test_a_learner_may_not_read_the_stored_submissions(self, api: TestClient) -> None:
+        """The detail exists in the database; it is not the learner's to read."""
+        generated = _generate(api)
+
+        response = api.get(
+            f"/api/v1/generated-quizzes/{generated['quizId']}/submissions",
+            headers=auth(LEARNER_TOKEN),
+        )
+
+        assert response.status_code == 403
 
     def test_an_unknown_quiz_is_a_404(self, api: TestClient) -> None:
         response = api.post(

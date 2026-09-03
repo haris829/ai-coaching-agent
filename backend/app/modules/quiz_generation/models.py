@@ -36,6 +36,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Float,
     ForeignKey,
@@ -133,3 +134,107 @@ class GeneratedQuizQuestion(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<GeneratedQuizQuestion {self.quiz_id}#{self.sequence}>"
+
+
+class QuizSubmission(Base):
+    """One sitting of a generated quiz: what was answered, and what the verdict was.
+
+    WHY THE VERDICT IS STORED AND NOT ONLY RETURNED
+    -----------------------------------------------
+    A pass that exists only in an HTTP response is not a record of anything. If somebody later asks
+    "did this person pass, and on what", the answer has to come from a row rather than from whoever
+    still has the browser tab open. So the arithmetic is stored with the numbers it was computed
+    from — total, correct, percentage, and the pass mark **as it stood at the time**.
+
+    The pass mark is copied here rather than read back through the quiz. It is already frozen on the
+    quiz row, so this is belt and braces, but it makes a stored result readable on its own: a row
+    that says 55% against a pass mark of 50 needs no second lookup to be understood, and cannot be
+    re-interpreted by a later change to anything.
+
+    WHY THIS IS NOT UC-04
+    ---------------------
+    UC-04 records the immutable result of a *submitted attempt* — one locked to a configuration
+    version, timed, with a snapshot of the exact questions delivered — and that result drives
+    certification. This records a sitting of the thin two-call contract, which has no attempt, no
+    timing and no certificate behind it. Keeping them in separate tables is what stops an anonymous
+    caller minting scored attempts for learners who never sat anything.
+    """
+
+    __tablename__ = f"{TABLE_PREFIX}quiz_submissions"
+
+    id: Mapped[str] = id_column()
+    quiz_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(f"{TABLE_PREFIX}generated_quizzes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: Who sat it, when the caller was identified. Nullable because the contract does not require a
+    #: learner — it is a quiz id and a set of answers.
+    learner_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    total: Mapped[int] = mapped_column(Integer, nullable=False)
+    correct: Mapped[int] = mapped_column(Integer, nullable=False)
+    percentage: Mapped[float] = mapped_column(Float, nullable=False)
+    #: The pass mark this sitting was judged against — see the class docstring.
+    pass_mark: Mapped[float] = mapped_column(Float, nullable=False)
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    submitted_at: Mapped[datetime] = mapped_column(nullable=False)
+
+    answers: Mapped[list[SubmittedAnswer]] = relationship(
+        back_populates="submission",
+        cascade="all, delete-orphan",
+        order_by="SubmittedAnswer.sequence",
+    )
+
+    __table_args__ = (
+        CheckConstraint("total >= 0", name="total_non_negative"),
+        CheckConstraint("correct >= 0 AND correct <= total", name="correct_within_total"),
+        CheckConstraint("percentage >= 0 AND percentage <= 100", name="percentage_range"),
+        CheckConstraint("pass_mark >= 0 AND pass_mark <= 100", name="pass_mark_range"),
+        Index(f"ix_{TABLE_PREFIX}quiz_submissions_quiz_id", "quiz_id"),
+        Index(f"ix_{TABLE_PREFIX}quiz_submissions_learner_ref", "learner_ref"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        verdict = "PASS" if self.passed else "FAIL"
+        return f"<QuizSubmission {self.id} {verdict} {self.percentage}%>"
+
+
+class SubmittedAnswer(Base):
+    """One answer as submitted, and whether it was right.
+
+    ``given_label`` is nullable: a question left unanswered is stored as an answer of nothing,
+    marked incorrect. Recording the absence is the point — a row per question means the stored
+    sitting accounts for every question asked, so nobody can later argue a question was never put.
+
+    The correct label is deliberately **not** copied here. It lives on the question in UC-02's bank,
+    which is where marking reads it from; a second copy could disagree with the first, and the one
+    that disagreed would be the one somebody quoted.
+    """
+
+    __tablename__ = f"{TABLE_PREFIX}submitted_answers"
+
+    id: Mapped[str] = id_column()
+    submission_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(f"{TABLE_PREFIX}quiz_submissions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: Soft reference to ``qb_questions.id``.
+    question_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: The option label the caller chose, or ``None`` for a question left unanswered.
+    given_label: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    is_correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    submission: Mapped[QuizSubmission] = relationship(back_populates="answers")
+
+    __table_args__ = (
+        CheckConstraint("sequence >= 1", name="sequence_positive"),
+        UniqueConstraint("submission_id", "sequence", name="submission_id_sequence"),
+        Index(f"ix_{TABLE_PREFIX}submitted_answers_question_id", "question_id"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<SubmittedAnswer {self.submission_id}#{self.sequence}={self.given_label}>"

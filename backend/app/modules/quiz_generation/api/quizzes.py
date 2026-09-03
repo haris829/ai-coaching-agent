@@ -2,10 +2,11 @@
 
 The contract the company sketched, in four routes::
 
-    POST /v1/generated-quizzes                      admin      -> quizId, MCQs + keys, passMark
-    GET  /v1/generated-quizzes/{quiz_id}            any caller -> the quiz to sit, without keys
-    POST /v1/generated-quizzes/{quiz_id}/results    any caller -> PASS / FAIL
-    GET  /v1/generated-quizzes/{quiz_id}/answers    admin      -> the keys, for their integration
+    POST /v1/generated-quizzes                        admin      -> quizId, MCQs + keys, passMark
+    GET  /v1/generated-quizzes/{quiz_id}              any caller -> the quiz to sit, without keys
+    POST /v1/generated-quizzes/{quiz_id}/results      any caller -> PASS / FAIL
+    GET  /v1/generated-quizzes/{quiz_id}/answers      admin      -> the keys
+    GET  /v1/generated-quizzes/{quiz_id}/submissions  admin      -> every stored sitting, in detail
 
 NOT UNDER ``/v1/quizzes``
 -------------------------
@@ -24,6 +25,11 @@ marking route reports only whether each answer was right.
 That is not over-caution. Without it, the marking route is an answer-key oracle: submit twenty
 guesses, read the corrections, submit again and pass. The key stays in the database and marking
 happens against it server-side, which is the only arrangement where a pass means anything.
+
+**The learner is not told their own answers either.** The marking route returns the verdict and the
+score, and says nothing about which questions were right — that is the company's own contract,
+``Response {Pass / Fail}``. Every answer *is* recorded and marked in ``qz_submitted_answers``, and
+an administrator reads it back through the submissions route. Stored, not returned.
 
 WHY GENERATION IS ADMIN-ONLY
 ----------------------------
@@ -53,6 +59,8 @@ from app.modules.quiz_generation.api.schemas import (
     QuestionModel,
     QuizModel,
     ResultModel,
+    StoredSubmissionModel,
+    SubmissionListModel,
     SubmitAnswersRequest,
 )
 from app.modules.quiz_generation.services.quiz_service import (
@@ -85,6 +93,20 @@ def _keyed(question: QuizQuestionView) -> KeyedQuestionModel:
         options=_options(question),
         answer=question.answer,
         explanation=question.explanation,
+    )
+
+
+def _verdict(result: ResultView) -> ResultModel:
+    """The verdict and the score. No per-answer detail — that is stored, not returned."""
+    return ResultModel(
+        submission_id=result.submission_id,
+        quiz_id=result.quiz_id,
+        total=result.total,
+        correct=result.correct,
+        percentage=result.percentage,
+        pass_mark=result.pass_mark,
+        passed=result.passed,
+        outcome="PASS" if result.passed else "FAIL",
     )
 
 
@@ -177,8 +199,10 @@ _RESULTS_DESCRIPTION = (
     "'ran out of time' from 'did not know', so omitting a question cannot improve a percentage.\n\n"
     "The verdict uses the pass mark frozen onto the quiz when it was generated, and **50% passes** "
     "— the same boundary UC-05 applies, so one score cannot pass here and fail there.\n\n"
-    "The response says whether each answer was right, but never what the right answer was. "
-    "Otherwise this route would be a way to read the answer key."
+    "**Returns the verdict and the score only.** Not which answers were right, and not what the "
+    "right answers were. Every answer is stored and marked in the database, and an administrator "
+    "can read it back from `/submissions` — the learner is simply not told. Per-question "
+    "corrections here would also make this route a way to read the whole answer key."
 )
 
 
@@ -192,27 +216,12 @@ def submit_answers(
     quiz_id: str,
     payload: SubmitAnswersRequest,
     service: QuizServiceDep,
-    _caller: CurrentPrincipal,
+    caller: CurrentPrincipal,
 ) -> ResultModel:
-    result: ResultView = service.mark(quiz_id, payload.answers)
-    return ResultModel(
-        quiz_id=result.quiz_id,
-        total=result.total,
-        correct=result.correct,
-        percentage=result.percentage,
-        pass_mark=result.pass_mark,
-        passed=result.passed,
-        outcome="PASS" if result.passed else "FAIL",
-        answers=[
-            MarkedAnswerModel(
-                sequence=answer.sequence,
-                question_id=answer.question_id,
-                given=answer.given,
-                is_correct=answer.is_correct,
-            )
-            for answer in result.answers
-        ],
-    )
+    result: ResultView = service.mark(quiz_id, payload.answers, learner_ref=str(caller.id))
+    # `result.answers` carries the per-question detail. It is written to the database and
+    # deliberately kept out of this response — see the module docstring.
+    return _verdict(result)
 
 
 # ---------------------------------------------------------------------------
@@ -233,3 +242,45 @@ def read_answers(
     quiz_id: str, service: QuizServiceDep, _admin: AdminPrincipal
 ) -> GeneratedQuizModel:
     return _generated(service.find(quiz_id))
+
+
+_SUBMISSIONS_DESCRIPTION = (
+    "What was answered, what was correct, and the verdict — for each sitting, newest first.\n\n"
+    "This is the detail the marking route deliberately withholds from the learner. It is recorded "
+    "in `qz_quiz_submissions` and `qz_submitted_answers` at the moment of marking, so \"did this "
+    "person pass, and on what\" is answerable from the database rather than from whoever still "
+    "holds the response.\n\n"
+    "The correct answer shown here is read from the question bank, not from a copy kept alongside "
+    "the submission — a second copy could disagree with the first, and the one that disagreed "
+    "would be the one somebody quoted."
+)
+
+
+@router.get(
+    "/{quiz_id}/submissions",
+    response_model=SubmissionListModel,
+    summary="Every stored sitting of this quiz, in detail (administrators only)",
+    description=_SUBMISSIONS_DESCRIPTION,
+)
+def read_submissions(
+    quiz_id: str, service: QuizServiceDep, _admin: AdminPrincipal
+) -> SubmissionListModel:
+    return SubmissionListModel(
+        quiz_id=quiz_id,
+        submissions=[
+            StoredSubmissionModel(
+                **_verdict(result).model_dump(),
+                answers=[
+                    MarkedAnswerModel(
+                        sequence=answer.sequence,
+                        question_id=answer.question_id,
+                        given=answer.given,
+                        correct=answer.correct,
+                        is_correct=answer.is_correct,
+                    )
+                    for answer in result.answers
+                ],
+            )
+            for result in service.submissions(quiz_id)
+        ],
+    )

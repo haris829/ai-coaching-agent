@@ -18,6 +18,13 @@
  * an answer key leaking into that payload would show up here as a visible field rather than as a
  * silent one. The key is shown only under "Reveal the answer key", which calls the
  * administrator-only route for it.
+ *
+ * WHAT THE RESULT DOES NOT SHOW
+ * -----------------------------
+ * Which answers were right. The marking response carries the verdict and the score and nothing
+ * else, so there is nothing here to render per question — the learner is not told their answers.
+ * Every answer *is* recorded and marked in the database; "Stored submissions" reads it back through
+ * the administrator-only route, which is the point: stored, not returned.
  */
 
 import { useState, type ReactNode } from 'react';
@@ -27,6 +34,7 @@ import type {
   GeneratedQuiz,
   QuizResult,
   SittableQuiz,
+  StoredSubmission,
 } from '../api/quizGenerationTypes';
 import { ErrorSummary, Spinner, useToast } from '../components/ui';
 
@@ -47,6 +55,7 @@ export function GeneratedQuizPage(): ReactNode {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [result, setResult] = useState<QuizResult | null>(null);
   const [keys, setKeys] = useState<GeneratedQuiz | null>(null);
+  const [stored, setStored] = useState<StoredSubmission[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
@@ -56,6 +65,7 @@ export function GeneratedQuizPage(): ReactNode {
     setQuiz(null);
     setResult(null);
     setKeys(null);
+    setStored(null);
     setAnswers({});
     setMeta(null);
     try {
@@ -89,6 +99,21 @@ export function GeneratedQuizPage(): ReactNode {
     try {
       setResult(await generatedQuizzes.submit(quiz.quizId, answers));
     } catch (cause) {
+      setError(cause);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadStored(): Promise<void> {
+    if (!quiz) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const list = await generatedQuizzes.submissions(quiz.quizId);
+      setStored(list.submissions);
+    } catch (cause) {
+      // A learner identity gets 403 here, which is the point rather than a bug.
       setError(cause);
     } finally {
       setBusy(false);
@@ -241,11 +266,6 @@ export function GeneratedQuizPage(): ReactNode {
                   <strong>{option.label}.</strong> {option.text}
                 </label>
               ))}
-              {result && (
-                <p className={result.answers[question.sequence - 1]?.isCorrect ? 'pass' : 'fail'}>
-                  {result.answers[question.sequence - 1]?.isCorrect ? 'Correct' : 'Incorrect'}
-                </p>
-              )}
             </article>
           ))}
 
@@ -270,8 +290,10 @@ export function GeneratedQuizPage(): ReactNode {
             {result.percentage}%), pass mark {result.passMark}%
           </p>
           <p className="muted">
-            The marking response says whether each answer was right, never what the right answer
-            was. Marking happens in the database against the stored key.
+            The marking response carries this verdict and nothing else — not which answers were
+            right, and not what the right ones were. Marking happened in the database against the
+            stored key, and every answer was recorded there. Stored submission{' '}
+            <code>{result.submissionId}</code>.
           </p>
 
           {!keys && (
@@ -288,6 +310,49 @@ export function GeneratedQuizPage(): ReactNode {
                 </li>
               ))}
             </ol>
+          )}
+
+          {!stored && (
+            <button type="button" onClick={loadStored} disabled={busy}>
+              Stored submissions (administrator only)
+            </button>
+          )}
+          {stored && (
+            <>
+              <p className="muted">
+                Read from the database, newest first. This is the detail the learner was not given.
+              </p>
+              {stored.map((submission) => (
+                <div key={submission.submissionId}>
+                  <p className={submission.passed ? 'pass' : 'fail'}>
+                    <strong>{submission.outcome}</strong> — {submission.correct}/
+                    {submission.total} ({submission.percentage}%)
+                  </p>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Q</th>
+                        <th>Answered</th>
+                        <th>Correct</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {submission.answers.map((answer) => (
+                        <tr key={answer.questionId}>
+                          <td>{answer.sequence}</td>
+                          <td>{answer.given ?? <span className="muted">not answered</span>}</td>
+                          <td>{answer.correct}</td>
+                          <td className={answer.isCorrect ? 'pass' : 'fail'}>
+                            {answer.isCorrect ? 'right' : 'wrong'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </>
           )}
         </section>
       )}

@@ -28,7 +28,11 @@ from app.modules.quiz_generation.integration.question_bank import (
     QuestionBankSink,
     QuestionBankView,
 )
-from app.modules.quiz_generation.models import GeneratedQuiz
+from app.modules.quiz_generation.models import (
+    GeneratedQuiz,
+    QuizSubmission,
+    SubmittedAnswer,
+)
 from app.modules.quiz_generation.services.quiz_service import GeneratedQuizService
 
 # ---------------------------------------------------------------------------
@@ -342,6 +346,82 @@ class TestMarking:
         }
 
         assert service.mark(view.quiz_id, answers).correct == 3
+
+    def test_the_sitting_is_written_to_the_database(
+        self, service: GeneratedQuizService, db: Session
+    ) -> None:
+        """A verdict that exists only in a return value is not a record of anything."""
+        view = service.create(topic="Contract formation", count=3)
+        answers = {str(view.questions[0].sequence): view.questions[0].answer}
+
+        result = service.mark(view.quiz_id, answers, learner_ref="learner-7")
+
+        stored = db.get(QuizSubmission, result.submission_id)
+        assert stored is not None
+        assert stored.quiz_id == view.quiz_id
+        assert stored.learner_ref == "learner-7"
+        assert stored.total == 3
+        assert stored.correct == 1
+        assert stored.passed is False
+        # The pass mark is copied onto the row, so it reads correctly without a second lookup.
+        assert stored.pass_mark == 50.0
+        assert [row.sequence for row in stored.answers] == [1, 2, 3]
+
+    def test_an_unanswered_question_is_stored_as_an_answer_of_nothing(
+        self, service: GeneratedQuizService, db: Session
+    ) -> None:
+        """A row per question asked, so nobody can argue a question was never put."""
+        view = service.create(topic="Contract formation", count=3)
+
+        result = service.mark(view.quiz_id, {})
+
+        rows = db.query(SubmittedAnswer).filter(
+            SubmittedAnswer.submission_id == result.submission_id
+        ).all()
+        assert len(rows) == 3
+        assert all(row.given_label is None for row in rows)
+        assert all(row.is_correct is False for row in rows)
+
+    def test_the_correct_answer_is_not_copied_alongside_the_submission(
+        self, service: GeneratedQuizService, db: Session
+    ) -> None:
+        """One source of truth for the key.
+
+        A copy stored next to the submission could disagree with the question bank, and the one
+        that disagreed would be the one somebody quoted.
+        """
+        columns = {column.name for column in SubmittedAnswer.__table__.columns}
+
+        assert "correct" not in columns
+        assert "correct_label" not in columns
+        assert "answer" not in columns
+
+    def test_two_sittings_of_one_quiz_are_two_rows(
+        self, service: GeneratedQuizService, db: Session
+    ) -> None:
+        view = service.create(topic="Contract formation", count=3)
+        first = service.mark(view.quiz_id, {})
+        second = service.mark(
+            view.quiz_id, {str(q.sequence): q.answer for q in view.questions}
+        )
+
+        assert first.submission_id != second.submission_id
+        assert db.query(QuizSubmission).count() == 2
+        assert service.submissions(view.quiz_id)[0].passed is True, "newest first"
+
+    def test_stored_submissions_carry_the_correct_answer_for_an_administrator(
+        self, service: GeneratedQuizService
+    ) -> None:
+        view = service.create(topic="Contract formation", count=3)
+        service.mark(view.quiz_id, {str(q.sequence): q.answer for q in view.questions})
+
+        stored = service.submissions(view.quiz_id)
+
+        assert len(stored) == 1
+        # Read back from the bank, not from a copy.
+        assert [answer.correct for answer in stored[0].answers] == [
+            question.answer for question in view.questions
+        ]
 
     def test_marking_an_unknown_quiz_is_a_not_found(
         self, service: GeneratedQuizService

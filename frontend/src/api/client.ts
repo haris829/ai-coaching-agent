@@ -59,6 +59,7 @@ import type {
   GeneratedQuiz,
   QuizResult,
   SittableQuiz,
+  SubmissionList,
 } from './quizGenerationTypes';
 import type {
   CoachingEligibility,
@@ -1033,5 +1034,15 @@ export const generatedQuizzes = {
   /** Read the answer key back. Administrator only. */
   answers(quizId: string): Promise<GeneratedQuiz> {
     return get(`${V1}/generated-quizzes/${encodeURIComponent(quizId)}/answers`);
+  },
+
+  /**
+   * Every stored sitting, in full. Administrator only.
+   *
+   * This is the detail the marking route withholds from the learner: what was answered, what was
+   * correct, and the verdict. It is stored at the moment of marking, not reconstructed.
+   */
+  submissions(quizId: string): Promise<SubmissionList> {
+    return get(`${V1}/generated-quizzes/${encodeURIComponent(quizId)}/submissions`);
   },
 };

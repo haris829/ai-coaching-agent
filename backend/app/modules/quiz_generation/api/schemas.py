@@ -110,29 +110,57 @@ class SubmitAnswersRequest(CamelModel):
     )
 
 
-class MarkedAnswerModel(CamelModel):
-    """How one answer was marked.
+class ResultModel(CamelModel):
+    """"Response {Pass / Fail}" — the verdict and the arithmetic behind it, and nothing else.
 
-    **No `correct` field.** Reporting the right answer here would turn the results endpoint into a
-    way to read the whole answer key: submit rubbish, read the keys, submit again. `isCorrect` is
-    what a marking response needs, and the key stays where it belongs — in the database, and in the
-    administrator-only responses.
+    **Deliberately says nothing about individual answers.** Not which ones were right, and not what
+    the right ones were. Two reasons, and they are different:
+
+    * Per-question corrections would make this route an answer-key oracle — submit twenty guesses,
+      read which were wrong, submit again and pass.
+    * The learner is not told their answers at all. That is the company's own contract:
+      ``Response {Pass / Fail}``.
+
+    The full detail *is* recorded — every answer, marked, in ``qz_submitted_answers`` — and an
+    administrator can read it through ``GET /generated-quizzes/{id}/submissions``. It is stored and
+    not returned, which is the distinction that matters.
+
+    ``correct`` is a count, not a list, so it gives the percentage its meaning without saying which
+    questions it refers to.
     """
 
-    sequence: int
-    question_id: str
-    given: str | None = None
-    is_correct: bool
-
-
-class ResultModel(CamelModel):
-    """"Response {Pass / Fail}" — with the arithmetic behind it, so a verdict is checkable."""
-
+    submission_id: str = Field(
+        description="The stored sitting. The verdict is a row, not only this response."
+    )
     quiz_id: str
     total: int
-    correct: int
+    correct: int = Field(description="How many were right. A count only — never which ones.")
     percentage: float
     pass_mark: float
     passed: bool
     outcome: str = Field(description="`PASS` or `FAIL`.")
+
+
+class MarkedAnswerModel(CamelModel):
+    """One answer of a stored sitting, as an **administrator** reads it back.
+
+    This is the only shape that pairs a learner's answer with the correct one, and it is returned
+    only from the administrator-only submissions route.
+    """
+
+    sequence: int
+    question_id: str
+    given: str | None = Field(default=None, description="`None` if the question was not answered.")
+    correct: str
+    is_correct: bool
+
+
+class StoredSubmissionModel(ResultModel):
+    """A stored sitting with its per-answer detail. Administrators only."""
+
     answers: list[MarkedAnswerModel] = Field(default_factory=list)
+
+
+class SubmissionListModel(CamelModel):
+    quiz_id: str
+    submissions: list[StoredSubmissionModel] = Field(default_factory=list)

@@ -44,6 +44,8 @@ from app.modules.quiz_generation.models import (
     DEFAULT_PASS_MARK,
     GeneratedQuiz,
     GeneratedQuizQuestion,
+    QuizSubmission,
+    SubmittedAnswer,
 )
 from app.modules.quiz_generation.services.generation_service import (
     QuestionGenerationService,
@@ -89,6 +91,8 @@ class MarkedAnswer:
 
 @dataclass(frozen=True, slots=True)
 class ResultView:
+    #: The stored sitting this verdict came from. The verdict is a row, not just a response.
+    submission_id: str
     quiz_id: str
     total: int
     correct: int
@@ -192,12 +196,18 @@ class GeneratedQuizService:
 
     # ---- mark -------------------------------------------------------------
 
-    def mark(self, quiz_id: str, answers: dict[str, str]) -> ResultView:
-        """Mark submitted answers against the quiz's own questions.
+    def mark(
+        self, quiz_id: str, answers: dict[str, str], *, learner_ref: str | None = None
+    ) -> ResultView:
+        """Mark submitted answers against the quiz's own questions, and store the sitting.
 
         ``answers`` is keyed either by sequence — ``"1"``, ``"Q1"`` — or by question id, because a
         caller holding the payload this service returned has both and should not have to guess which
         one is expected.
+
+        The verdict is **written before it is returned**. A pass that exists only in an HTTP
+        response is not a record of anything, and "did this person pass, and on what" has to be
+        answerable from the database later.
         """
         quiz = self._quiz(quiz_id)
         questions = self._questions(quiz.id)
@@ -221,16 +231,82 @@ class GeneratedQuizService:
 
         correct = sum(1 for answer in marked if answer.is_correct)
         percentage = round(100.0 * correct / len(marked), 2)
+        # `>=`, matching UC-05, so the same score cannot pass here and fail there.
+        passed = percentage >= quiz.pass_mark
+
+        submission = QuizSubmission(
+            quiz_id=quiz.id,
+            learner_ref=learner_ref,
+            total=len(marked),
+            correct=correct,
+            percentage=percentage,
+            # Copied, not referenced — a stored row should be readable without a second lookup.
+            pass_mark=quiz.pass_mark,
+            passed=passed,
+            submitted_at=self._clock.now(),
+        )
+        self._session.add(submission)
+        self._session.flush()
+        for answer in marked:
+            self._session.add(
+                SubmittedAnswer(
+                    submission_id=submission.id,
+                    question_id=answer.question_id,
+                    sequence=answer.sequence,
+                    # None for a question left unanswered. Recording the absence means the stored
+                    # sitting accounts for every question that was asked.
+                    given_label=answer.given,
+                    is_correct=answer.is_correct,
+                )
+            )
+        self._session.commit()
+
         return ResultView(
+            submission_id=submission.id,
             quiz_id=quiz.id,
             total=len(marked),
             correct=correct,
             percentage=percentage,
             pass_mark=quiz.pass_mark,
-            # `>=`, matching UC-05, so the same score cannot pass here and fail there.
-            passed=percentage >= quiz.pass_mark,
+            passed=passed,
             answers=tuple(marked),
         )
+
+    def submissions(self, quiz_id: str) -> tuple[ResultView, ...]:
+        """Every stored sitting of a quiz, newest first. For an administrator to read back."""
+        quiz = self._quiz(quiz_id)
+        rows = self._session.scalars(
+            select(QuizSubmission)
+            .where(QuizSubmission.quiz_id == quiz.id)
+            .order_by(QuizSubmission.submitted_at.desc())
+        ).all()
+        return tuple(
+            ResultView(
+                submission_id=row.id,
+                quiz_id=row.quiz_id,
+                total=row.total,
+                correct=row.correct,
+                percentage=row.percentage,
+                pass_mark=row.pass_mark,
+                passed=row.passed,
+                answers=tuple(
+                    MarkedAnswer(
+                        sequence=answer.sequence,
+                        question_id=answer.question_id,
+                        given=answer.given_label,
+                        # Read from the bank, so a stored sitting cannot disagree with the key.
+                        correct=self._key(answer.question_id),
+                        is_correct=answer.is_correct,
+                    )
+                    for answer in row.answers
+                ),
+            )
+            for row in rows
+        )
+
+    def _key(self, question_id: str) -> str:
+        detail = self._view.read(question_id)
+        return detail.answer_label if detail else "?"
 
     # ---- internals --------------------------------------------------------
 

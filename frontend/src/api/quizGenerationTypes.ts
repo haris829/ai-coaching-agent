@@ -56,20 +56,19 @@ export type SittableQuiz = {
 };
 
 /**
- * How one answer was marked.
+ * The verdict a learner receives.
  *
- * There is deliberately no `correct` field. The backend never sends the right answer back from the
- * marking route — otherwise submitting guesses and reading the corrections would be a way to read
- * the whole answer key.
+ * **No per-answer detail at all** — not which answers were right, and not what the right ones
+ * were. Two reasons: per-question corrections would let anyone read the whole answer key by
+ * submitting guesses twice, and the company's contract is `Response {Pass / Fail}` — the learner is
+ * not told their answers.
+ *
+ * `correct` is a count, so the percentage means something without saying which questions it refers
+ * to. The full detail is recorded in the database and read back by an administrator through
+ * `submissions`.
  */
-export type MarkedAnswer = {
-  sequence: number;
-  questionId: string;
-  given: string | null;
-  isCorrect: boolean;
-};
-
 export type QuizResult = {
+  submissionId: string;
   quizId: string;
   total: number;
   correct: number;
@@ -77,5 +76,27 @@ export type QuizResult = {
   passMark: number;
   passed: boolean;
   outcome: 'PASS' | 'FAIL';
+};
+
+/**
+ * One answer of a stored sitting, as an administrator reads it back.
+ *
+ * The only shape that pairs a learner's answer with the correct one, and it comes only from the
+ * administrator-only submissions route.
+ */
+export type MarkedAnswer = {
+  sequence: number;
+  questionId: string;
+  given: string | null;
+  correct: string;
+  isCorrect: boolean;
+};
+
+export type StoredSubmission = QuizResult & {
   answers: MarkedAnswer[];
+};
+
+export type SubmissionList = {
+  quizId: string;
+  submissions: StoredSubmission[];
 };

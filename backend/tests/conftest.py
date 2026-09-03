@@ -41,6 +41,15 @@ os.environ["LOG_LEVEL"] = "CRITICAL"
 os.environ["ADMIN_API_TOKEN"] = ""
 os.environ["CSV_MAX_ROWS"] = "5000"
 os.environ["AUTO_SEED"] = "0"
+# No AI provider, always. Several tests assert what a stock deployment does when no coach is bound
+# (UC-07 §6, §27) and what `/health` reports about it — and those assertions were silently passing
+# only because the developer's own `.env` happened to leave these blank. The moment a real key was
+# put there to run the app, they failed. Environment variables take precedence over `.env` in
+# pydantic-settings, so pinning them here makes the suite say what it means instead of inheriting
+# whatever the machine is configured for. A test that wants a coach binds one explicitly, through
+# `make_ctx(coaching_llm=...)`.
+os.environ["COACHING_LLM_PROVIDER"] = ""
+os.environ["COACHING_LLM_API_KEY"] = ""
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
@@ -60,6 +69,8 @@ _TRUNCATION_ORDER = [
     "qy_question_flags",
     # Generated quizzes. Child before parent: the question links carry a real foreign key onto the
     # quiz row. Soft references onto UC-02's questions, so they need no ordering against qb_.
+    "qz_submitted_answers",
+    "qz_quiz_submissions",
     "qz_generated_quiz_questions",
     "qz_generated_quizzes",
     # Newest capability first, which is also child-before-parent. A capability whose tables are
