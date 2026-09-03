@@ -18,13 +18,35 @@ make the catalogue a hard dependency of generation, which it is not.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.modules.quiz_configuration.models import Course
 from app.modules.quiz_generation.domain.generation import CourseBrief
+
+
+@dataclass(frozen=True, slots=True)
+class CourseSummary:
+    """A course as it appears in a list to choose from.
+
+    Carries ``has_brief`` rather than the description itself. A picker needs to show *which*
+    courses will generate well, and the description can run to thousands of characters — sending
+    all of them to render a dropdown would be wasteful, and sending none would hide the one fact
+    that matters when choosing.
+    """
+
+    code: str
+    title: str
+    rqf_level: int | None = None
+    subject_area: str | None = None
+    #: Whether this course has a description to generate from. A course without one is generated
+    #: from its title alone, which produces noticeably more generic questions.
+    has_brief: bool = False
+    #: How many quizzes have already been generated for it, so a chooser can see what is fresh.
+    generated_count: int = 0
 
 
 @runtime_checkable
@@ -32,6 +54,8 @@ class CourseLookup(Protocol):
     """A course code in, a brief out — or ``None`` when the code is unknown."""
 
     def find(self, course_ref: str) -> CourseBrief | None: ...
+
+    def list_all(self, limit: int = 200) -> tuple[CourseSummary, ...]: ...
 
 
 class CatalogueLookup:
@@ -61,9 +85,46 @@ class CatalogueLookup:
             subject_area=getattr(course, "subject_area", None),
         )
 
+    def list_all(self, limit: int = 200) -> tuple[CourseSummary, ...]:
+        """The courses available to generate from, by name and title.
+
+        Ordered by title rather than by code, because a person choosing a course reads the name.
+        The generated-quiz count is joined in so a chooser can see at a glance which courses have
+        been covered already and which have not.
+        """
+        # Imported here rather than at module scope: this is the one place the catalogue needs to
+        # know that generated quizzes exist, and the count is a convenience for a picker, not part
+        # of what a course *is*.
+        from app.modules.quiz_generation.models import GeneratedQuiz
+
+        counts = dict(
+            self._session.execute(
+                select(GeneratedQuiz.course_ref, func.count(GeneratedQuiz.id))
+                .where(GeneratedQuiz.course_ref.is_not(None))
+                .group_by(GeneratedQuiz.course_ref)
+            ).all()
+        )
+        courses = self._session.scalars(
+            select(Course).order_by(Course.title).limit(max(1, limit))
+        ).all()
+        return tuple(
+            CourseSummary(
+                code=course.code,
+                title=course.title,
+                rqf_level=getattr(course, "rqf_level", None),
+                subject_area=getattr(course, "subject_area", None),
+                has_brief=bool(getattr(course, "description", None)),
+                generated_count=int(counts.get(course.code, 0)),
+            )
+            for course in courses
+        )
+
 
 class NoCatalogue:
     """A lookup that knows nothing, for callers with no database to consult."""
 
     def find(self, course_ref: str) -> CourseBrief | None:  # noqa: ARG002 - the point is None
         return None
+
+    def list_all(self, limit: int = 200) -> tuple[CourseSummary, ...]:  # noqa: ARG002
+        return ()

@@ -27,10 +27,11 @@
  * the administrator-only route, which is the point: stored, not returned.
  */
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import { ApiError, generatedQuizzes } from '../api/client';
 import type {
+  CourseSummary,
   GeneratedQuiz,
   QuizResult,
   SittableQuiz,
@@ -43,6 +44,7 @@ export function GeneratedQuizPage(): ReactNode {
 
   const [topic, setTopic] = useState('Anti-money laundering for fee earners');
   const [courseRef, setCourseRef] = useState('');
+  const [courses, setCourses] = useState<CourseSummary[]>([]);
   const [count, setCount] = useState(5);
   const [passMark, setPassMark] = useState(50);
 
@@ -58,6 +60,31 @@ export function GeneratedQuizPage(): ReactNode {
   const [stored, setStored] = useState<StoredSubmission[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+
+  // The courses already in the catalogue, loaded by name and title so a course is chosen from a
+  // list rather than by knowing its code. Silently empty for a non-administrator, whose 403 here
+  // is expected and not worth an error banner — the Generate button will refuse them anyway.
+  useEffect(() => {
+    let cancelled = false;
+    generatedQuizzes
+      .courses()
+      .then((list) => {
+        if (!cancelled) setCourses(list.courses);
+      })
+      .catch(() => {
+        if (!cancelled) setCourses([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Choosing a course fills the topic in with its title, which is what generation is aimed at. */
+  function chooseCourse(code: string): void {
+    setCourseRef(code);
+    const course = courses.find((candidate) => candidate.code === code);
+    if (course) setTopic(course.title);
+  }
 
   async function generate(): Promise<void> {
     setGenerating(true);
@@ -144,6 +171,11 @@ export function GeneratedQuizPage(): ReactNode {
         Generated questions are stored as <strong>DRAFT</strong> in the question bank, so nothing a
         model wrote can reach a real attempt until an administrator activates it.
       </p>
+      <p className="muted">
+        Generating the same course twice does not produce the same paper. Each run is told what has
+        already been asked and instructed to test different points, and anything that comes back
+        repeated is refused and counted in <code>rejected</code>.
+      </p>
 
       <section className="card">
         <h2>1. Generate</h2>
@@ -157,15 +189,24 @@ export function GeneratedQuizPage(): ReactNode {
             />
           </label>
           <label>
-            Course code <span className="muted">(optional)</span>
-            <input
-              value={courseRef}
-              onChange={(event) => setCourseRef(event.target.value)}
-              placeholder="e.g. LLP-3"
-            />
+            Course <span className="muted">(optional)</span>
+            <select value={courseRef} onChange={(event) => chooseCourse(event.target.value)}>
+              <option value="">— generate from the topic alone —</option>
+              {courses.map((course) => (
+                <option key={course.code} value={course.code}>
+                  {course.title}
+                  {course.rqfLevel ? ` · RQF ${course.rqfLevel}` : ''}
+                  {course.hasBrief ? '' : ' · title only'}
+                  {course.generatedCount ? ` · ${course.generatedCount} generated` : ''}
+                </option>
+              ))}
+            </select>
             <small className="muted">
-              A course from the catalogue supplies its description and RQF level, which pitches the
-              questions at the right level.
+              {courses.length === 0
+                ? 'No courses loaded — generation will use the topic alone.'
+                : 'A course marked “title only” has no description in the catalogue, so its ' +
+                  'questions come from its name alone and are noticeably more generic. ' +
+                  '“N generated” is how many quizzes it has already had.'}
             </small>
           </label>
           <label>

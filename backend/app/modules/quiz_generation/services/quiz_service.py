@@ -34,9 +34,14 @@ from sqlalchemy.orm import Session
 from app.core.errors import NotFoundError, ValidationError
 from app.core.time import Clock, SystemClock
 from app.modules.quiz_generation.domain.generation import CourseBrief
-from app.modules.quiz_generation.integration.catalogue import CourseLookup, NoCatalogue
+from app.modules.quiz_generation.integration.catalogue import (
+    CourseLookup,
+    CourseSummary,
+    NoCatalogue,
+)
 from app.modules.quiz_generation.integration.llm import QuestionGeneratorLLM
 from app.modules.quiz_generation.integration.question_bank import (
+    QuestionHistory,
     QuestionSink,
     QuestionView,
 )
@@ -115,10 +120,11 @@ class GeneratedQuizService:
         sink: QuestionSink,
         view: QuestionView,
         courses: CourseLookup | None = None,
+        history: QuestionHistory | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._session = session
-        self._generation = QuestionGenerationService(generator, sink)
+        self._generation = QuestionGenerationService(generator, sink, history)
         self._view = view
         # Optional: a caller with no catalogue can still generate from a bare topic.
         self._courses = courses or NoCatalogue()
@@ -182,6 +188,14 @@ class GeneratedQuizService:
         )
 
     # ---- read -------------------------------------------------------------
+
+    def courses(self, limit: int = 200) -> tuple[CourseSummary, ...]:
+        """The courses available to generate from.
+
+        Exists because choosing a course by typing its code means knowing the code. A person
+        generating a quiz picks from a list of names.
+        """
+        return self._courses.list_all(limit)
 
     def find(self, quiz_id: str) -> QuizView:
         quiz = self._quiz(quiz_id)

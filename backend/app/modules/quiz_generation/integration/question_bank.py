@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.modules.question_bank.domain.drafts import OptionDraft, QuestionDraft
@@ -27,6 +28,7 @@ from app.modules.question_bank.domain.enums import QuestionStatus, QuestionType
 from app.modules.question_bank.models import Question
 from app.modules.question_bank.services.question_service import create_question
 from app.modules.quiz_generation.domain.generation import CourseBrief, GeneratedQuestion
+from app.modules.quiz_generation.models import GeneratedQuiz, GeneratedQuizQuestion
 
 
 @runtime_checkable
@@ -144,3 +146,69 @@ class QuestionBankView:
             answer_label=correct[0],
             explanation=question.explanation,
         )
+
+
+@runtime_checkable
+class QuestionHistory(Protocol):
+    """What has already been asked for a course, so the next generation can avoid it."""
+
+    def previous_stems(
+        self, *, course_ref: str | None, topic: str, limit: int
+    ) -> tuple[str, ...]: ...
+
+
+class NoHistory:
+    """A history that remembers nothing, for a caller with no database to consult."""
+
+    def previous_stems(
+        self, *, course_ref: str | None, topic: str, limit: int
+    ) -> tuple[str, ...]:  # noqa: ARG002 - the point is the empty tuple
+        return ()
+
+
+class GeneratedHistory:
+    """``QuestionHistory`` over the quizzes this module has already generated.
+
+    Matches on the course code where one was given, and on the topic otherwise. Both, in fact:
+    generating twice for ``LL-28231`` and generating twice for the bare topic "Anti-money
+    laundering" are the same mistake from the learner's point of view, and a caller who supplies a
+    course code on one run and not on the next should still not be handed the same paper.
+
+    Reads only questions this module generated — a quiz is built from ``qz_generated_quizzes``, so
+    an administrator's own hand-written questions are never treated as something to avoid.
+    """
+
+    __slots__ = ("_session",)
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def previous_stems(
+        self, *, course_ref: str | None, topic: str, limit: int
+    ) -> tuple[str, ...]:
+        subject = " ".join((topic or "").split())
+        conditions = []
+        if course_ref:
+            conditions.append(GeneratedQuiz.course_ref == course_ref)
+        if subject:
+            conditions.append(GeneratedQuiz.topic == subject)
+        if not conditions:
+            return ()
+
+        rows = self._session.execute(
+            select(Question.question_text)
+            .join(
+                GeneratedQuizQuestion,
+                GeneratedQuizQuestion.question_id == Question.id,
+            )
+            .join(
+                GeneratedQuiz,
+                GeneratedQuiz.id == GeneratedQuizQuestion.quiz_id,
+            )
+            .where(or_(*conditions))
+            # Newest first, so a cap drops the oldest — the ones a model is least likely to
+            # reproduce anyway.
+            .order_by(GeneratedQuiz.created_at.desc(), GeneratedQuizQuestion.sequence)
+            .limit(max(1, limit))
+        ).scalars()
+        return tuple(text for text in rows if text)

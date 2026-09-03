@@ -2,6 +2,7 @@
 
 The contract the company sketched, in four routes::
 
+    GET  /v1/quiz-generation/courses                  admin      -> courses to generate from
     POST /v1/generated-quizzes                        admin      -> quizId, MCQs + keys, passMark
     GET  /v1/generated-quizzes/{quiz_id}              any caller -> the quiz to sit, without keys
     POST /v1/generated-quizzes/{quiz_id}/results      any caller -> PASS / FAIL
@@ -51,6 +52,8 @@ from fastapi import APIRouter, status
 from app.modules.identity.security import AdminPrincipal, CurrentPrincipal
 from app.modules.quiz_generation.api.dependencies import QuizServiceDep
 from app.modules.quiz_generation.api.schemas import (
+    CourseListModel,
+    CourseSummaryModel,
     GeneratedQuizModel,
     GenerateQuizRequest,
     KeyedQuestionModel,
@@ -70,6 +73,45 @@ from app.modules.quiz_generation.services.quiz_service import (
 )
 
 router = APIRouter(prefix="/generated-quizzes", tags=["Quiz Generation"])
+
+#: A second router, deliberately.
+#:
+#: ``GET /generated-quizzes/courses`` would sit under the same prefix as
+#: ``GET /generated-quizzes/{quiz_id}`` and would only work because "courses" happens not to look
+#: like a quiz id — correct by accident, and by route-registration order. A separate prefix cannot
+#: be shadowed, so the course list stays reachable however the routes are declared.
+catalogue_router = APIRouter(prefix="/quiz-generation", tags=["Quiz Generation"])
+
+
+@catalogue_router.get(
+    "/courses",
+    response_model=CourseListModel,
+    summary="The courses available to generate a quiz from",
+    description=(
+        "Courses in the catalogue, by title, with what is known about each.\n\n"
+        "`hasBrief` is the field worth reading: a course with a description and an RQF level "
+        "generates questions pitched at the right level, while one with only a title produces "
+        "noticeably more generic ones. `generatedCount` shows how many quizzes a course has "
+        "already had, so a chooser can see what has been covered.\n\n"
+        "Ordered by title, because a person choosing a course reads the name, not the code."
+    ),
+)
+def list_courses(
+    service: QuizServiceDep, _admin: AdminPrincipal, limit: int = 200
+) -> CourseListModel:
+    return CourseListModel(
+        courses=[
+            CourseSummaryModel(
+                code=course.code,
+                title=course.title,
+                rqf_level=course.rqf_level,
+                subject_area=course.subject_area,
+                has_brief=course.has_brief,
+                generated_count=course.generated_count,
+            )
+            for course in service.courses(limit)
+        ]
+    )
 
 
 def _options(question: QuizQuestionView) -> list[OptionModel]:

@@ -18,6 +18,7 @@ from app.core.deps import DbSession
 from app.modules.quiz_generation.integration.catalogue import CatalogueLookup
 from app.modules.quiz_generation.integration.llm import build_generator
 from app.modules.quiz_generation.integration.question_bank import (
+    GeneratedHistory,
     QuestionBankSink,
     QuestionBankView,
 )
@@ -32,6 +33,9 @@ def get_quiz_service(db: DbSession) -> Iterator[GeneratedQuizService]:
         sink=QuestionBankSink(db),
         view=QuestionBankView(db),
         courses=CatalogueLookup(db),
+        # Without this, every generation starts from a blank slate and can hand back a paper the
+        # course has already been given.
+        history=GeneratedHistory(db),
     )
 
 

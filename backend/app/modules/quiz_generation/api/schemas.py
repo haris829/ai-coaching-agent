@@ -164,3 +164,26 @@ class StoredSubmissionModel(ResultModel):
 class SubmissionListModel(CamelModel):
     quiz_id: str
     submissions: list[StoredSubmissionModel] = Field(default_factory=list)
+
+
+class CourseSummaryModel(CamelModel):
+    """One course to choose from when generating."""
+
+    code: str
+    title: str
+    rqf_level: int | None = None
+    subject_area: str | None = None
+    has_brief: bool = Field(
+        default=False,
+        description=(
+            "Whether this course has a description to generate from. A course without one is "
+            "generated from its title alone, which produces noticeably more generic questions."
+        ),
+    )
+    generated_count: int = Field(
+        default=0, description="How many quizzes have already been generated for this course."
+    )
+
+
+class CourseListModel(CamelModel):
+    courses: list[CourseSummaryModel] = Field(default_factory=list)

@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from app.core.logging import get_logger
 from app.modules.quiz_generation.domain.generation import (
     ANGLES,
+    MAX_AVOID_STEMS,
     MAX_QUESTIONS_PER_REQUEST,
     CourseBrief,
     GeneratedQuestion,
@@ -36,7 +37,11 @@ from app.modules.quiz_generation.integration.llm import (
     QuestionGenerationFailedError,
     QuestionGeneratorLLM,
 )
-from app.modules.quiz_generation.integration.question_bank import QuestionSink
+from app.modules.quiz_generation.integration.question_bank import (
+    NoHistory,
+    QuestionHistory,
+    QuestionSink,
+)
 
 logger = get_logger(__name__)
 
@@ -83,11 +88,18 @@ class GenerationOutcome:
 class QuestionGenerationService:
     """Generates draft questions for one course."""
 
-    __slots__ = ("_generator", "_sink")
+    __slots__ = ("_generator", "_sink", "_history")
 
-    def __init__(self, generator: QuestionGeneratorLLM, sink: QuestionSink) -> None:
+    def __init__(
+        self,
+        generator: QuestionGeneratorLLM,
+        sink: QuestionSink,
+        history: QuestionHistory | None = None,
+    ) -> None:
         self._generator = generator
         self._sink = sink
+        # Optional: without one, every generation starts from a blank slate and may repeat itself.
+        self._history = history or NoHistory()
 
     def generate(
         self,
@@ -107,7 +119,14 @@ class QuestionGenerationService:
         sink writes through a SQLAlchemy session and a session is not safe to share between threads.
         """
         wanted = max(1, min(int(count), MAX_QUESTIONS_PER_REQUEST))
-        accepted, rejected, reasons = self._ask(brief, wanted)
+        # What this course has already been asked. Fetched once and shared by every batch, so all
+        # of them avoid the same history rather than each discovering it separately.
+        already = self._history.previous_stems(
+            course_ref=brief.course_id or None,
+            topic=brief.name,
+            limit=MAX_AVOID_STEMS,
+        )
+        accepted, rejected, reasons = self._ask(brief, wanted, already)
 
         if not accepted:
             # Nothing usable came back. Raising rather than returning an empty success: a caller
@@ -138,6 +157,7 @@ class QuestionGenerationService:
                 "created": len(stored),
                 "rejected": total_rejected,
                 "batches": len(self._plan(wanted)),
+                "avoided": len(already),
             },
         )
         return GenerationOutcome(
@@ -169,7 +189,7 @@ class QuestionGenerationService:
         return tuple(sizes)
 
     def _ask(
-        self, brief: CourseBrief, wanted: int
+        self, brief: CourseBrief, wanted: int, already: tuple[str, ...] = ()
     ) -> tuple[list[GeneratedQuestion], int, list[str]]:
         """Every question the model produced that could be vouched for, across all batches.
 
@@ -180,6 +200,10 @@ class QuestionGenerationService:
 
         A batch that fails outright costs only itself. Losing one batch of a five-batch run should
         cost forty questions out of fifty, not the whole request.
+
+        ``already`` is what this course has been asked before. It goes into every batch's prompt and
+        is also seeded into the duplicate check, so a question that repeats an earlier *run* is
+        refused on the same footing as one that repeats an earlier batch.
         """
         plan = self._plan(wanted)
 
@@ -189,6 +213,7 @@ class QuestionGenerationService:
                 size,
                 # No angle for a single-batch request: there is nothing to differentiate it from.
                 angle=ANGLES[index % len(ANGLES)] if len(plan) > 1 else None,
+                avoid=already,
             )
             try:
                 text = self._generator.complete(
@@ -211,7 +236,10 @@ class QuestionGenerationService:
         accepted: list[GeneratedQuestion] = []
         reasons: list[str] = []
         rejected = 0
-        seen: set[str] = set()
+        # Seeded with what has already been asked, so an earlier run's question is refused exactly
+        # as an earlier batch's would be. The prompt asks the model not to repeat itself; this is
+        # what happens when it does anyway.
+        seen: set[str] = {stem.strip().casefold() for stem in already if stem}
 
         for (text, failure), size in zip(replies, plan, strict=True):
             if failure is not None:
@@ -227,10 +255,10 @@ class QuestionGenerationService:
             for question in report.accepted:
                 if len(accepted) >= wanted:
                     break
-                key = question.question_text.casefold()
+                key = question.question_text.strip().casefold()
                 if key in seen:
                     rejected += 1
-                    note = "a question repeated one from another batch"
+                    note = "a question repeated one already asked for this course"
                     if note not in reasons:
                         reasons.append(note)
                     continue

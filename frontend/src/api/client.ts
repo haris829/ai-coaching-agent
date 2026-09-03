@@ -57,6 +57,7 @@ import type {
 import type {
   GenerateQuizInput,
   GeneratedQuiz,
+  CourseList,
   QuizResult,
   SittableQuiz,
   SubmissionList,
@@ -1008,6 +1009,16 @@ export const analytics = {
  * what a learner uses and never carry one.
  */
 export const generatedQuizzes = {
+  /**
+   * The courses available to generate from. Administrator only.
+   *
+   * Its own path rather than `/generated-quizzes/courses`, so it cannot be shadowed by the
+   * `/{quizId}` route.
+   */
+  courses(): Promise<CourseList> {
+    return get(`${V1}/quiz-generation/courses`);
+  },
+
   /** Generate a quiz. Administrator only — it spends a model call and writes into the bank. */
   generate(input: GenerateQuizInput): Promise<GeneratedQuiz> {
     return json(`${V1}/generated-quizzes`, 'POST', input);

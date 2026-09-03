@@ -100,3 +100,23 @@ export type SubmissionList = {
   quizId: string;
   submissions: StoredSubmission[];
 };
+
+/**
+ * A course to choose from when generating.
+ *
+ * `hasBrief` is the field worth surfacing. A course with a description and a level generates
+ * questions pitched where the learner is actually assessed; one with only a title produces
+ * noticeably more generic ones. Showing that distinction is more useful than hiding it.
+ */
+export type CourseSummary = {
+  code: string;
+  title: string;
+  rqfLevel: number | null;
+  subjectArea: string | null;
+  hasBrief: boolean;
+  generatedCount: number;
+};
+
+export type CourseList = {
+  courses: CourseSummary[];
+};

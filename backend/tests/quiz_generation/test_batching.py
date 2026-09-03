@@ -233,7 +233,9 @@ class TestDegrading:
         # Ten distinct questions across five identical batches.
         assert outcome.created == 10
         assert outcome.rejected == 40
-        assert any("another batch" in reason for reason in outcome.reasons)
+        # One reason for both cases, because from the learner's side they are the same fault:
+        # a paper containing a question this course has already been given.
+        assert any("already asked for this course" in reason for reason in outcome.reasons)
         assert len(set(sink.stored)) == 10
 
     def test_one_failing_batch_costs_only_itself(self) -> None:

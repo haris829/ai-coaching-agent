@@ -48,6 +48,22 @@ SINGLE_CHOICE_OPTION_COUNT = len(OPTION_LABELS)
 #: fortune in one call and produce a quiz nobody will read.
 MAX_QUESTIONS_PER_REQUEST = 50
 
+#: How many previously-asked questions to show the model when asking for new ones.
+#:
+#: Every generation for a course must produce questions it has not produced before. The cheapest
+#: way to get that is to tell the model what it already wrote and ask for something else — but the
+#: list cannot grow without limit, or the hundredth generation would spend its whole prompt
+#: reciting the first ninety-nine.
+#:
+#: Forty is enough to cover the recent history that a model is most likely to repeat, and the
+#: exact-match check in the service catches anything that slips past regardless. Newest first, so
+#: what is dropped is the oldest and least likely to be reproduced.
+MAX_AVOID_STEMS = 40
+
+#: How much of each previously-asked question to show. The opening clause is what identifies the
+#: point being tested; the rest is scenario detail that would crowd out the instruction.
+AVOID_STEM_CHARS = 160
+
 #: Distinct angles to ask from, one per concurrent batch.
 #:
 #: A large request is split into several smaller ones that run at the same time, and identical
@@ -156,7 +172,13 @@ Return ONLY a JSON object, no prose before or after it:
 """.strip()
 
 
-def build_prompt(brief: CourseBrief, count: int, *, angle: str | None = None) -> str:
+def build_prompt(
+    brief: CourseBrief,
+    count: int,
+    *,
+    angle: str | None = None,
+    avoid: tuple[str, ...] = (),
+) -> str:
     """The instruction sent to the model.
 
     Everything the model is told about the course comes from ``brief``. There is deliberately no
@@ -167,6 +189,12 @@ def build_prompt(brief: CourseBrief, count: int, *, angle: str | None = None) ->
     ``angle`` narrows what this particular batch should test — see :data:`ANGLES`. It is optional
     because a single small request needs no angle at all; it exists so that several batches running
     at once do not all write the same questions.
+
+    ``avoid`` lists questions already asked for this course. Generating the same quiz twice is a
+    real failure for a system whose whole purpose is to produce a fresh paper each time, and asking
+    the model for something different is far more effective than filtering afterwards: a filter can
+    only reject a repeat, while this stops it being written. The filter still runs, because a model
+    told not to repeat itself sometimes does.
     """
     lines = [f"Course: {brief.name}"]
     if brief.rqf_level is not None:
@@ -181,10 +209,24 @@ def build_prompt(brief: CourseBrief, count: int, *, angle: str | None = None) ->
         lines.extend(f"  - {title}" for title in brief.modules[:30])
 
     focus = f"\n\nFor these questions, focus on {angle}." if angle else ""
+
+    already = ""
+    if avoid:
+        seen = "\n".join(
+            f"  - {' '.join(str(stem).split())[:AVOID_STEM_CHARS]}"
+            for stem in avoid[:MAX_AVOID_STEMS]
+        )
+        already = (
+            "\n\nThese questions have already been asked for this course. Write questions that "
+            "test DIFFERENT points. Do not rephrase any of these, and do not test the same rule "
+            "from a different angle:\n" + seen
+        )
+
     return (
         f"Write {count} multiple-choice questions for the following course.\n\n"
         + "\n".join(lines)
         + focus
+        + already
         + "\n\n"
         + _RULES
     )
