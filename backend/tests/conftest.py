@@ -58,6 +58,10 @@ _TRUNCATION_ORDER = [
     # the note in ``analytics/models.py`` for why that is the line every capability draws.
     "qy_review_actions",
     "qy_question_flags",
+    # Generated quizzes. Child before parent: the question links carry a real foreign key onto the
+    # quiz row. Soft references onto UC-02's questions, so they need no ordering against qb_.
+    "qz_generated_quiz_questions",
+    "qz_generated_quizzes",
     # Newest capability first, which is also child-before-parent. A capability whose tables are
     # missing from this list leaks state between tests, and the symptom is a *later* test failing
     # on a uniqueness constraint it never triggered itself.

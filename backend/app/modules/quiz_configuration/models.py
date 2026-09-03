@@ -36,6 +36,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     event,
     false,
@@ -67,6 +68,16 @@ class Course(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # What the course is about, and how hard it is. All three are nullable and unused by any
+    # business rule — they exist because question *generation* needs to know a course's subject and
+    # level to pitch questions correctly, and a title alone does not say either. RQF 2 is
+    # GCSE-equivalent and RQF 8 is doctoral, so that one integer changes the questions more than
+    # any prompt wording does. Populated by the catalogue import where the source has them.
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rqf_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    subject_area: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     created_at: Mapped[datetime] = created_at_column()
     updated_at: Mapped[datetime] = updated_at_column()
 

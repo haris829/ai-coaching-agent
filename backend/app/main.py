@@ -82,6 +82,7 @@ from app.modules.formal_assessment.integration.uc03_adapter import (
 from app.modules.identity.api import router as identity_router
 from app.modules.question_bank.api.router import question_bank_router
 from app.modules.quiz_configuration.api.router import quiz_configuration_router
+from app.modules.quiz_generation.api.router import quiz_generation_router
 from app.modules.retakes.api.router import retake_admin_router, retakes_router
 from app.modules.retakes.container import RetakeAppContext
 from app.modules.retakes.integration.uc03_adapter import attempt_provider_factory
@@ -299,6 +300,9 @@ def create_app(
     app.include_router(identity_router, prefix=settings.api_prefix)
     app.include_router(quiz_configuration_router, prefix=settings.api_prefix)
     app.include_router(question_bank_router, prefix=settings.api_prefix)
+    # The thin generate-and-mark contract. Under /v1 beside UC-03's attempt routes, because a
+    # generated quiz is a quiz — see quiz_generation/api/quizzes.py.
+    app.include_router(quiz_generation_router, prefix=f"{settings.api_prefix}/v1")
     # UC-03 keeps its own versioned prefix: it is the surface a learner client talks to, and
     # versioning the learner API independently of the admin API is worth preserving.
     app.include_router(attempt_delivery_router, prefix=f"{settings.api_prefix}/v1")

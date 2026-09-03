@@ -37,6 +37,7 @@ SCORING = "app.modules.scoring"
 CERTIFICATION = "app.modules.certification"
 FEEDBACK = "app.modules.feedback"
 COACHING = "app.modules.coaching"
+QUIZ_GENERATION = "app.modules.quiz_generation"
 RETAKES = "app.modules.retakes"
 FORMAL_ASSESSMENT = "app.modules.formal_assessment"
 ANALYTICS = "app.modules.analytics"
@@ -50,6 +51,7 @@ CAPABILITIES = {
     "certification": CERTIFICATION,
     "feedback": FEEDBACK,
     "coaching": COACHING,
+    "quiz_generation": QUIZ_GENERATION,
     "retakes": RETAKES,
     "formal_assessment": FORMAL_ASSESSMENT,
     "analytics": ANALYTICS,
@@ -157,7 +159,15 @@ def test_the_question_bank_depends_on_no_other_capability_at_all() -> None:
         for path in _python_files("modules", "question_bank")
         for imported in _imported_modules(path)
         if imported.startswith(
-            (QUIZ_CONFIGURATION, ATTEMPT_DELIVERY, SCORING, CERTIFICATION, FEEDBACK, COACHING)
+            (
+                QUIZ_CONFIGURATION,
+                ATTEMPT_DELIVERY,
+                SCORING,
+                CERTIFICATION,
+                FEEDBACK,
+                COACHING,
+                QUIZ_GENERATION,
+            )
         )
     ]
     assert offenders == [], "the question bank must depend on nothing else: " + str(offenders)
@@ -184,6 +194,7 @@ def test_the_domain_layers_stay_free_of_http_and_persistence() -> None:
         ("modules", "certification", "domain"),
         ("modules", "feedback", "domain"),
         ("modules", "coaching", "domain"),
+        ("modules", "quiz_generation", "domain"),
         ("modules", "retakes", "domain"),
         ("modules", "formal_assessment", "domain"),
         ("modules", "analytics", "domain"),
@@ -315,3 +326,54 @@ def test_the_request_session_dependency_is_declared_once() -> None:
         if "\nDbSession = Annotated" in path.read_text(encoding="utf-8")
     ]
     assert sites == ["app/core/deps.py"]
+
+
+# ---------------------------------------------------------------------------
+# Settings classes must not fight each other over the shared .env
+# ---------------------------------------------------------------------------
+
+
+def test_no_settings_class_both_reads_the_shared_env_file_and_forbids_extras() -> None:
+    """The combination that stops the application booting.
+
+    ``pydantic-settings`` feeds *every* key of a dotenv file into the model it is building. A
+    capability-scoped settings class that reads ``.env`` **and** sets ``extra="forbid"`` therefore
+    rejects every other capability's settings as unexpected input, and the application cannot start
+    at all whenever a ``.env`` file exists — which is exactly how anyone who copies
+    ``.env.example`` to ``.env`` will start it. The failure is total and the message names forty
+    unrelated variables, so it reads as a corrupt config rather than as this.
+
+    Either is fine alone: ``app.core.config.Settings`` reads ``.env`` and tolerates extras;
+    ``AnalyticsSettings`` forbids extras and takes its values through
+    ``analytics_settings_from``. Both together is the bug.
+    """
+    import importlib
+    import pkgutil
+
+    from pydantic_settings import BaseSettings
+
+    import app
+
+    offenders: list[str] = []
+    seen: set[type] = set()
+    for module in pkgutil.walk_packages(app.__path__, prefix="app."):
+        try:
+            imported = importlib.import_module(module.name)
+        except Exception:  # pragma: no cover - a module that needs runtime wiring
+            continue
+        for value in vars(imported).values():
+            if (
+                isinstance(value, type)
+                and value not in seen
+                and issubclass(value, BaseSettings)
+                and value is not BaseSettings
+            ):
+                seen.add(value)
+                config = getattr(value, "model_config", {})
+                if config.get("env_file") and config.get("extra") == "forbid":
+                    offenders.append(f"{value.__module__}.{value.__qualname__}")
+
+    assert offenders == [], (
+        "a settings class reads the shared .env and forbids extras, which stops the application "
+        "booting: " + str(sorted(set(offenders)))
+    )

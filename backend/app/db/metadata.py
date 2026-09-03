@@ -18,6 +18,7 @@ from app.modules.formal_assessment import models as formal_assessment_models  # 
 from app.modules.identity import models as identity_models  # noqa: F401
 from app.modules.question_bank import models as question_bank_models  # noqa: F401
 from app.modules.quiz_configuration import models as quiz_configuration_models  # noqa: F401
+from app.modules.quiz_generation import models as quiz_generation_models  # noqa: F401
 from app.modules.retakes import models as retake_models  # noqa: F401
 from app.modules.scoring import models as scoring_models  # noqa: F401
 

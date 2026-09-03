@@ -110,8 +110,19 @@ class AnalyticsSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="UC10_",
-        env_file=".env",
-        env_file_encoding="utf-8",
+        # **No `env_file`.** This class must not read the shared `.env` itself.
+        #
+        # `extra="forbid"` is load-bearing: it is what makes `validate_settings_payload` reject a
+        # misspelled setting instead of silently ignoring it, and what stops an
+        # `auth_enabled` switch being introduced by the back door. But pydantic-settings feeds
+        # *every* key in a dotenv file into the model, so a `.env` carrying the other capabilities'
+        # settings — DATABASE_URL, COACHING_LLM_MODEL, SEED_ADMIN_TOKEN, forty more — collides with
+        # `forbid` and the application cannot start at all. Which is exactly how anyone who copies
+        # `.env.example` to `.env` will try to start it.
+        #
+        # Nothing is lost by dropping the file source: `analytics_settings_from` threads each value
+        # through from the application's own `Settings`, which does read `.env`. Real `UC10_`
+        # environment variables still work, which is how a deployment sets them.
         extra="forbid",
         frozen=True,
     )
