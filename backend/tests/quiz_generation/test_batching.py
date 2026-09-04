@@ -16,7 +16,10 @@ import threading
 import pytest
 
 from app.modules.quiz_generation.domain.generation import ANGLES, CourseBrief
-from app.modules.quiz_generation.integration.llm import QuestionGenerationFailedError
+from app.modules.quiz_generation.integration.llm import (
+    QuestionGenerationFailedError,
+    QuestionGenerationUnavailableError,
+)
 from app.modules.quiz_generation.services.generation_service import (
     MAX_CONCURRENT_BATCHES,
     QUESTIONS_PER_BATCH,
@@ -279,3 +282,94 @@ class TestDegrading:
             )
 
         assert "a batch failed" in str(failure.value.log_context)
+
+
+# ---------------------------------------------------------------------------
+# Which failure it was
+# ---------------------------------------------------------------------------
+
+
+class TestReportingTheRightFailure:
+    """503 and 502 mean different things to whoever is on call.
+
+    503 unavailable is "the provider could not be reached — retry". 502 failed is "the provider
+    answered but will not follow the output contract, so a person needs to look at the prompt".
+
+    Every batch failure used to be reported as 502. Measured against a real account, a sweep of 33
+    requests at five concurrent lost 20 of them to Bedrock 429s and reported all 20 as 502 — which
+    sends an operator to read a prompt that was fine. Every one succeeded on retry.
+    """
+
+    def test_a_wholly_unreachable_provider_is_a_retryable_503(self) -> None:
+        class Throttled:
+            configured = True
+
+            def complete(self, prompt: str, *, max_tokens: int = 0) -> str:  # noqa: ARG002
+                raise QuestionGenerationUnavailableError(reason="HTTP_429")
+
+        with pytest.raises(QuestionGenerationUnavailableError) as failure:
+            QuestionGenerationService(Throttled(), CollectingSink()).generate(BRIEF, count=50)
+
+        assert failure.value.status_code == 503
+        assert failure.value.retryable is True
+
+    def test_a_provider_that_answers_with_rubbish_is_still_a_502(self) -> None:
+        """The distinction only helps if the other side of it still works."""
+
+        class Prose:
+            configured = True
+
+            def complete(self, prompt: str, *, max_tokens: int = 0) -> str:  # noqa: ARG002
+                return "Certainly! Here are some questions about the law."
+
+        with pytest.raises(QuestionGenerationFailedError) as failure:
+            QuestionGenerationService(Prose(), CollectingSink()).generate(BRIEF, count=50)
+
+        assert failure.value.status_code == 502
+
+    def test_a_mix_of_causes_is_not_reported_as_an_outage(self) -> None:
+        """One throttled batch and one that returned prose is not "the provider is down"."""
+
+        class Mixed:
+            configured = True
+
+            def __init__(self) -> None:
+                self._lock = threading.Lock()
+                self._calls = 0
+
+            def complete(self, prompt: str, *, max_tokens: int = 0) -> str:  # noqa: ARG002
+                with self._lock:
+                    self._calls += 1
+                    call = self._calls
+                if call % 2:
+                    raise QuestionGenerationUnavailableError(reason="HTTP_429")
+                raise RuntimeError("something else entirely")
+
+        with pytest.raises(QuestionGenerationFailedError):
+            QuestionGenerationService(Mixed(), CollectingSink()).generate(BRIEF, count=50)
+
+    def test_one_throttled_batch_out_of_five_is_not_an_outage_either(self) -> None:
+        """Forty questions is a result, not a failure. It must not raise at all."""
+
+        class OneThrottled:
+            configured = True
+
+            def __init__(self) -> None:
+                self._lock = threading.Lock()
+                self._calls = 0
+
+            def complete(self, prompt: str, *, max_tokens: int = 0) -> str:  # noqa: ARG002
+                with self._lock:
+                    self._calls += 1
+                    call = self._calls
+                if call == 3:
+                    raise QuestionGenerationUnavailableError(reason="HTTP_429")
+                return _reply([f"Call {call} question {n}?" for n in range(10)])
+
+        outcome = QuestionGenerationService(OneThrottled(), CollectingSink()).generate(
+            BRIEF, count=50
+        )
+
+        assert outcome.created == 40
+        assert outcome.rejected == 10
+        assert any("could not reach the provider" in r for r in outcome.reasons)

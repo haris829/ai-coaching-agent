@@ -35,6 +35,7 @@ from app.modules.quiz_generation.domain.generation import (
 )
 from app.modules.quiz_generation.integration.llm import (
     QuestionGenerationFailedError,
+    QuestionGenerationUnavailableError,
     QuestionGeneratorLLM,
 )
 from app.modules.quiz_generation.integration.question_bank import (
@@ -126,11 +127,24 @@ class QuestionGenerationService:
             topic=brief.name,
             limit=MAX_AVOID_STEMS,
         )
-        accepted, rejected, reasons = self._ask(brief, wanted, already)
+        accepted, rejected, reasons, unreachable = self._ask(brief, wanted, already)
 
         if not accepted:
             # Nothing usable came back. Raising rather than returning an empty success: a caller
             # that asked for twenty questions and silently got none would have no idea why.
+            #
+            # WHICH failure matters. The two error types mean different things to whoever is on
+            # call: 503 unavailable is "the provider could not be reached — retry", while 502
+            # failed is "the provider answered but will not follow the output contract, so a person
+            # needs to look at the prompt". Collapsing every batch failure into 502 sent an
+            # operator to read a prompt that was fine when the real cause was a rate limit.
+            #
+            # Measured: a sweep of 33 requests at five concurrent lost 20 to Bedrock 429s and
+            # reported all of them as 502. Every one succeeded on retry.
+            if unreachable:
+                raise QuestionGenerationUnavailableError(
+                    reason="; ".join(reasons) or "every batch failed to reach the provider"
+                )
             raise QuestionGenerationFailedError(
                 reason="; ".join(reasons) or "no question survived parsing",
                 accepted=0,
@@ -190,7 +204,7 @@ class QuestionGenerationService:
 
     def _ask(
         self, brief: CourseBrief, wanted: int, already: tuple[str, ...] = ()
-    ) -> tuple[list[GeneratedQuestion], int, list[str]]:
+    ) -> tuple[list[GeneratedQuestion], int, list[str], bool]:
         """Every question the model produced that could be vouched for, across all batches.
 
         Deduplicated **across** batches. Each batch is blind to what the others wrote — that is what
@@ -204,10 +218,14 @@ class QuestionGenerationService:
         ``already`` is what this course has been asked before. It goes into every batch's prompt and
         is also seeded into the duplicate check, so a question that repeats an earlier *run* is
         refused on the same footing as one that repeats an earlier batch.
+
+        The fourth return value says whether every batch that failed did so because the provider
+        could not be reached. The caller needs it to choose between a retryable 503 and a 502 that
+        asks a person to look at the prompt — see :meth:`generate`.
         """
         plan = self._plan(wanted)
 
-        def one(index: int, size: int) -> tuple[str | None, str | None]:
+        def one(index: int, size: int) -> tuple[str | None, str | None, bool]:
             prompt = build_prompt(
                 brief,
                 size,
@@ -219,9 +237,14 @@ class QuestionGenerationService:
                 text = self._generator.complete(
                     prompt, max_tokens=max(MIN_OUTPUT_TOKENS, size * TOKENS_PER_QUESTION)
                 )
+            except QuestionGenerationUnavailableError as error:
+                # The provider could not be reached — a throttle, a timeout, an outage. Flagged
+                # separately so the whole request can be reported as retryable if this is all that
+                # went wrong.
+                return None, f"a batch could not reach the provider: {error.log_context}", True
             except Exception as error:  # noqa: BLE001 - one batch must not sink the run
-                return None, f"a batch failed: {type(error).__name__}"
-            return text, None
+                return None, f"a batch failed: {type(error).__name__}", False
+            return text, None, False
 
         if len(plan) == 1:
             replies = [one(0, plan[0])]
@@ -236,14 +259,18 @@ class QuestionGenerationService:
         accepted: list[GeneratedQuestion] = []
         reasons: list[str] = []
         rejected = 0
+        failures = 0
+        unreachable_failures = 0
         # Seeded with what has already been asked, so an earlier run's question is refused exactly
         # as an earlier batch's would be. The prompt asks the model not to repeat itself; this is
         # what happens when it does anyway.
         seen: set[str] = {stem.strip().casefold() for stem in already if stem}
 
-        for (text, failure), size in zip(replies, plan, strict=True):
+        for (text, failure, unreachable), size in zip(replies, plan, strict=True):
             if failure is not None:
                 rejected += size
+                failures += 1
+                unreachable_failures += 1 if unreachable else 0
                 if failure not in reasons:
                     reasons.append(failure)
                 continue
@@ -265,4 +292,8 @@ class QuestionGenerationService:
                 seen.add(key)
                 accepted.append(question)
 
-        return accepted, rejected, reasons
+        # "Every batch failed, and every failure was the provider being unreachable." Both halves
+        # matter: one batch throttled out of five is not an outage, and a mix of causes is not one
+        # either.
+        every_failure_was_unreachable = failures > 0 and failures == unreachable_failures
+        return accepted, rejected, reasons, every_failure_was_unreachable

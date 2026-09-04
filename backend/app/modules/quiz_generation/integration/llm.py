@@ -20,6 +20,8 @@ to a model call is worse than no quiz.
 
 from __future__ import annotations
 
+import contextlib
+import time
 import urllib.parse
 from typing import Any, Protocol, runtime_checkable
 
@@ -27,6 +29,9 @@ import httpx
 
 from app.core.config import Settings
 from app.core.errors import AppError
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class QuestionGenerationUnavailableError(AppError):
@@ -105,6 +110,25 @@ class BedrockQuestionGenerator:
             self._settings.coaching_llm_model
         )
 
+    #: How many times to retry a throttled request, and how long to wait between attempts.
+    #:
+    #: Concurrent batches are what make a fifty-question request fast, and they are also what
+    #: earns a 429: five simultaneous calls is well within Bedrock's per-account limit on a quiet
+    #: account and over it on a busy one. Measured on a real account, a sweep of 33 one-question
+    #: requests at five at a time lost 20 of them to throttling, and every one succeeded when
+    #: retried.
+    #:
+    #: Losing a batch to a limit that clears in a second is the wrong outcome when waiting a second
+    #: is available. Three attempts with a widening pause, and then it gives up rather than
+    #: hammering a provider that is asking for quiet.
+    THROTTLE_ATTEMPTS = 3
+    THROTTLE_BACKOFF_SECONDS = (1.0, 3.0)
+
+    #: Statuses worth retrying. 429 is the throttle; 500, 502, 503 and 504 are the provider having
+    #: a moment. Everything else — a bad key, a model that does not exist, a malformed request — is
+    #: a fault that will repeat identically, so retrying it only wastes time.
+    RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+
     def complete(self, prompt: str, *, max_tokens: int) -> str:
         if not self.configured:
             raise QuestionGenerationUnavailableError(reason="NO_API_KEY_OR_MODEL")
@@ -125,21 +149,45 @@ class BedrockQuestionGenerator:
         # Generation is slow by nature, so it gets its own timeout rather than the coaching one:
         # twenty questions is not a chat turn.
         timeout = max(60.0, self._settings.coaching_llm_timeout_seconds * 6)
-        try:
-            response = httpx.post(
-                url,
-                json=body,
-                headers={
-                    "Authorization": f"Bearer {self._settings.coaching_llm_api_key or ''}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-                timeout=timeout,
+        headers = {
+            "Authorization": f"Bearer {self._settings.coaching_llm_api_key or ''}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        response = None
+        for attempt in range(self.THROTTLE_ATTEMPTS):
+            try:
+                response = httpx.post(url, json=body, headers=headers, timeout=timeout)
+            except httpx.TimeoutException as exc:
+                raise QuestionGenerationUnavailableError(reason="TIMEOUT") from exc
+            except httpx.HTTPError as exc:
+                raise QuestionGenerationUnavailableError(reason=type(exc).__name__) from exc
+
+            if response.status_code not in self.RETRYABLE_STATUSES:
+                break
+            if attempt == self.THROTTLE_ATTEMPTS - 1:
+                break
+            # Widening pause. `Retry-After` is honoured when the provider sends one, because a
+            # provider saying how long to wait knows better than a fixed table does.
+            wait = self.THROTTLE_BACKOFF_SECONDS[
+                min(attempt, len(self.THROTTLE_BACKOFF_SECONDS) - 1)
+            ]
+            retry_after = response.headers.get("Retry-After")
+            if retry_after:
+                # A non-numeric `Retry-After` (the HTTP-date form) is ignored rather than parsed:
+                # the table below is a reasonable wait either way, and a date is not worth the
+                # code to handle for a value this provider sends in seconds.
+                with contextlib.suppress(ValueError):
+                    wait = max(wait, min(float(retry_after), 30.0))
+            logger.info(
+                "question_generation.retrying",
+                extra={"status": response.status_code, "attempt": attempt + 1},
             )
-        except httpx.TimeoutException as exc:
-            raise QuestionGenerationUnavailableError(reason="TIMEOUT") from exc
-        except httpx.HTTPError as exc:
-            raise QuestionGenerationUnavailableError(reason=type(exc).__name__) from exc
+            time.sleep(wait)
+
+        if response is None:  # pragma: no cover - the loop always assigns or raises
+            raise QuestionGenerationUnavailableError(reason="NO_RESPONSE")
 
         if response.status_code >= 400:
             # The status is operational. The body is not forwarded: a provider error can echo the
