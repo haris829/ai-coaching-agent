@@ -166,17 +166,28 @@ class GeneratedQuizService:
             raise ValidationError("The pass mark must be between 0 and 100.")
 
         # A named course gives the model a description, a level and a module list to work from. An
-        # unknown code is not an error — the topic the caller typed still stands on its own.
-        brief = (self._courses.find(course_ref) if course_ref else None) or CourseBrief(
-            course_id=course_ref or subject, name=subject
+        # unknown reference is not an error — the topic the caller typed still stands on its own.
+        #
+        # The topic is tried as a course reference too, because a caller who sends only
+        # {"topic": "Medical Law MA"} has named a course whether or not they used the courseRef
+        # field. Looking it up costs one indexed query and is the difference between generating
+        # from a syllabus and generating from four words.
+        matched = (self._courses.find(course_ref) if course_ref else None) or self._courses.find(
+            subject
         )
+        brief = matched or CourseBrief(course_id=course_ref or subject, name=subject)
+        # Record WHICH course was matched, even when the caller sent only a name. Without this the
+        # response says `courseRef: null` for a request that did resolve, and a caller has no way to
+        # tell a match from a silent miss — and a silent miss is exactly the case worth seeing,
+        # because it means the quiz was generated from a bare string rather than from a syllabus.
+        resolved_ref = matched.course_id if matched else course_ref
         outcome = self._generation.generate(
             brief, count=count, actor=actor, topics=(subject,)
         )
 
         quiz = GeneratedQuiz(
             topic=subject[:255],
-            course_ref=course_ref,
+            course_ref=resolved_ref,
             requested_count=outcome.requested,
             question_count=outcome.created,
             pass_mark=float(pass_mark),

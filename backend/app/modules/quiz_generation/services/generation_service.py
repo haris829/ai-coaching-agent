@@ -67,6 +67,21 @@ QUESTIONS_PER_BATCH = 10
 #: instead of a quiz.
 MAX_CONCURRENT_BATCHES = 5
 
+#: Extra questions to ask for per batch when the course has been generated for before, as a
+#: proportion of the batch.
+#:
+#: A repeat generation drops anything the course has already been asked. Without headroom those
+#: drops are simply lost: ask for ten on a course with history and you can get seven, because the
+#: model returned exactly ten and three of them repeated. The caller asked for ten.
+#:
+#: So a batch on a course with history asks for more than it needs and the surplus is discarded.
+#: It costs a few tokens on repeat generations only — a first generation has nothing to avoid and
+#: asks for exactly what was wanted.
+REPEAT_HEADROOM = 0.4
+
+#: Ceiling on that headroom, so a batch never balloons.
+MAX_HEADROOM_QUESTIONS = 8
+
 
 @dataclass(frozen=True, slots=True)
 class GenerationOutcome:
@@ -225,17 +240,25 @@ class QuestionGenerationService:
         """
         plan = self._plan(wanted)
 
+        # Ask for more than is needed when there is history to avoid — see REPEAT_HEADROOM.
+        def with_headroom(size: int) -> int:
+            if not already:
+                return size
+            extra = min(MAX_HEADROOM_QUESTIONS, max(1, round(size * REPEAT_HEADROOM)))
+            return size + extra
+
         def one(index: int, size: int) -> tuple[str | None, str | None, bool]:
+            asked = with_headroom(size)
             prompt = build_prompt(
                 brief,
-                size,
+                asked,
                 # No angle for a single-batch request: there is nothing to differentiate it from.
                 angle=ANGLES[index % len(ANGLES)] if len(plan) > 1 else None,
                 avoid=already,
             )
             try:
                 text = self._generator.complete(
-                    prompt, max_tokens=max(MIN_OUTPUT_TOKENS, size * TOKENS_PER_QUESTION)
+                    prompt, max_tokens=max(MIN_OUTPUT_TOKENS, asked * TOKENS_PER_QUESTION)
                 )
             except QuestionGenerationUnavailableError as error:
                 # The provider could not be reached — a throttle, a timeout, an outage. Flagged
@@ -274,7 +297,10 @@ class QuestionGenerationService:
                 if failure not in reasons:
                     reasons.append(failure)
                 continue
-            report = parse_questions(text or "", wanted=size)
+            # Parsed up to what was *asked for*, not what the slot needs, so the surplus is
+            # available to replace anything dropped as a repeat. The overall `wanted` still caps
+            # the run, so no caller gets more than they requested.
+            report = parse_questions(text or "", wanted=with_headroom(size))
             rejected += report.rejected
             for reason in report.reasons:
                 if reason not in reasons:

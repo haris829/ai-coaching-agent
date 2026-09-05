@@ -51,7 +51,13 @@ class CourseSummary:
 
 @runtime_checkable
 class CourseLookup(Protocol):
-    """A course code in, a brief out — or ``None`` when the code is unknown."""
+    """A course reference in, a brief out — or ``None`` when nothing matches.
+
+    A "reference" is whatever the caller has: the catalogue code, or the course's name. Callers
+    outside this system have the name — nobody integrating against us knows that Medical Law MA is
+    ``LL-45165`` — so requiring the code would mean the description and level were never used and
+    every quiz was generated from a bare string.
+    """
 
     def find(self, course_ref: str) -> CourseBrief | None: ...
 
@@ -66,13 +72,28 @@ class CatalogueLookup:
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    #: Below this, a partial title match is not attempted. "Law" appears in most of the catalogue
+    #: and matching on it would be a coin toss dressed up as a lookup.
+    MIN_PARTIAL_CHARS = 5
+
     def find(self, course_ref: str) -> CourseBrief | None:
-        code = (course_ref or "").strip()
-        if not code:
+        """Resolve a course by its code or by its name.
+
+        Three attempts, narrowest first, and each one must be **unambiguous**:
+
+        1. the catalogue code, exactly (case-insensitively — a code typed by hand varies);
+        2. the course title, exactly, case-insensitively and ignoring surrounding space;
+        3. a title that contains the reference — but only when exactly one course does.
+
+        Ambiguity returns ``None`` rather than a guess. Picking one of four courses called
+        something-Law would generate a quiz about the wrong syllabus and give no sign that it had:
+        the caller would get a plausible quiz for a course they did not ask for, which is worse than
+        getting one generated from the name alone.
+        """
+        reference = " ".join((course_ref or "").split())
+        if not reference:
             return None
-        course = self._session.scalars(
-            select(Course).where(Course.code == code)
-        ).one_or_none()
+        course = self._resolve(reference)
         if course is None:
             return None
         return CourseBrief(
@@ -84,6 +105,33 @@ class CatalogueLookup:
             rqf_level=getattr(course, "rqf_level", None),
             subject_area=getattr(course, "subject_area", None),
         )
+
+    def _resolve(self, reference: str) -> Course | None:
+        """The course this reference names, or ``None`` if none or more than one does."""
+        lowered = reference.lower()
+
+        exact_code = self._session.scalars(
+            select(Course).where(func.lower(Course.code) == lowered)
+        ).all()
+        if len(exact_code) == 1:
+            return exact_code[0]
+
+        exact_title = self._session.scalars(
+            select(Course).where(func.lower(Course.title) == lowered)
+        ).all()
+        if len(exact_title) == 1:
+            return exact_title[0]
+
+        if len(reference) < self.MIN_PARTIAL_CHARS:
+            return None
+
+        # `%` and `_` are wildcards in LIKE, so a title containing them would otherwise match more
+        # than the caller asked for. Escaped rather than stripped: they are legitimate characters.
+        pattern = "%" + lowered.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        partial = self._session.scalars(
+            select(Course).where(func.lower(Course.title).like(pattern, escape="\\")).limit(2)
+        ).all()
+        return partial[0] if len(partial) == 1 else None
 
     def list_all(self, limit: int = 200) -> tuple[CourseSummary, ...]:
         """The courses available to generate from, by name and title.
