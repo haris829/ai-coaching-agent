@@ -37,8 +37,11 @@ PORTABILITY
 -----------
 SQLite and PostgreSQL both. ``op.batch_alter_table`` for the additions, since SQLite's ALTER goes
 through batch mode. The backfill is one correlated UPDATE per column using only standard SQL — no
-``json_object``, no ``FILTER``, no ``string_agg``, none of which exist on both. The options object
-is assembled with plain concatenation for the same reason.
+``json_object``, no ``FILTER``, no ``string_agg``, none of which exist on both. Booleans are tested
+for truthiness directly rather than compared with ``1``: ``is_correct`` is a real BOOLEAN and
+PostgreSQL has no implicit cast from integer, so ``= 1`` is a hard error there while being silently
+accepted by SQLite. The options object is assembled in Python rather than in SQL, because every
+dialect spells JSON aggregation differently.
 """
 
 from __future__ import annotations
@@ -84,7 +87,11 @@ def upgrade() -> None:
                SET answer_label = (
                      SELECT o.label FROM qb_question_options AS o
                       WHERE o.question_id = qz_generated_quiz_questions.question_id
-                        AND o.is_correct = 1
+                        -- Bare, not `= 1`. `is_correct` is a real BOOLEAN, and PostgreSQL has no
+                        -- implicit cast from integer: `= 1` is a hard error there and silently
+                        -- fine on SQLite, which is how it got written. Testing truthiness
+                        -- directly is valid on both.
+                        AND o.is_correct
                    )
              WHERE answer_label IS NULL
             """
