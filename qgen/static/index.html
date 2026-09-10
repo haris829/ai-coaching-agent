@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask your courses</title>
+<style>
+  :root {
+    --bg: #fbfaf8; --panel: #ffffff; --ink: #1b1a18; --muted: #6b6862;
+    --line: #e3dfd8; --accent: #7a3e2f; --ok: #2f6b46; --bad: #93341f;
+    --soft: #f4f1ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a; --panel: #1f2124; --ink: #ecebe8; --muted: #9b9790;
+      --line: #33363b; --accent: #d99177; --ok: #7bbf95; --bad: #e0866c;
+      --soft: #24262a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 40px 20px 90px; }
+  h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: -0.015em; }
+  .sub { color: var(--muted); margin: 0 0 24px; font-size: 15px; }
+  textarea {
+    width: 100%; font: inherit; resize: vertical; min-height: 58px;
+    padding: 14px 15px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink);
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 10px; padding: 10px 18px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  }
+  button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+  button:hover:not(:disabled) { filter: brightness(1.06); border-color: var(--accent); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  .chips { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+    border-radius: 20px; padding: 5px 13px; font-size: 13px; cursor: pointer;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--ink); }
+  .status { margin-top: 26px; color: var(--muted); font-size: 15px; }
+  .card {
+    margin-top: 26px; padding: 22px 24px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px;
+  }
+  .card.error { border-color: var(--bad); }
+  .card.error .body { color: var(--bad); }
+  .head {
+    display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+    margin-bottom: 12px; color: var(--muted); font-size: 14px;
+  }
+  .badge {
+    font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; white-space: nowrap;
+    border: 1px solid var(--line); border-radius: 20px; padding: 2px 9px; color: var(--muted);
+  }
+  .body { font-size: 16.5px; }
+  .opt {
+    display: flex; gap: 10px; width: 100%; text-align: left; margin-top: 8px;
+    padding: 11px 13px; background: var(--bg); border-radius: 9px;
+  }
+  .opt .lab { font-weight: 600; color: var(--muted); flex: 0 0 auto; }
+  .opt.correct { border-color: var(--ok); color: var(--ok); }
+  .opt.wrong { border-color: var(--bad); color: var(--bad); }
+  .verdict { margin-top: 14px; font-size: 15px; }
+  .verdict.correct { color: var(--ok); }
+  .verdict.wrong { color: var(--bad); }
+  .why { color: var(--muted); margin-top: 6px; font-size: 14.5px; }
+  .prov {
+    margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line);
+    font-size: 14px; color: var(--muted);
+  }
+  .prov.grounded { color: var(--ok); }
+  .prov.ungrounded { color: var(--accent); }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; font-size: 14px; color: var(--muted); }
+  summary:hover { color: var(--ink); }
+  .src { margin-top: 10px; padding: 11px 13px; background: var(--soft); border-radius: 9px;
+         font-size: 14px; border-left: 3px solid transparent; }
+  .src.used { border-left-color: var(--ok); }
+  .src .where { color: var(--muted); font-size: 12.5px; margin-bottom: 4px;
+                text-transform: uppercase; letter-spacing: 0.05em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Ask your courses</h1>
+  <p class="sub">Ask a question and get an answer — or name a course and be tested on it.</p>
+
+  <textarea id="q" rows="2"
+    placeholder="What is collective efficacy?   ·   or a course name: Criminology"></textarea>
+
+  <div class="actions">
+    <button id="ask" class="primary">Answer this</button>
+    <button id="quiz">Question me on this course</button>
+  </div>
+  <p class="hint" id="hint"></p>
+
+  <div class="chips" id="chips"></div>
+
+  <p class="status" id="status" hidden></p>
+  <div id="out"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const box = $("q"), out = $("out"), status = $("status");
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* What this sitting has already been shown, per course. Kept here rather than on the server:
+   it is the state of one screen, and a table of it would be a table nobody ever deletes from. */
+const seen = {};
+
+function busy(on, message) {
+  $("ask").disabled = $("quiz").disabled = on;
+  status.hidden = !on;
+  status.textContent = message || "";
+}
+
+function fail(message) {
+  out.innerHTML = `<div class="card error"><div class="body">${esc(message)}</div></div>`;
+}
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = Array.isArray(data.detail) ? data.detail[0]?.msg : data.detail;
+    throw new Error(data.message || detail || `${res.status} ${res.statusText}`);
+  }
+  return data;
+}
+
+/* ---------------------------------------------------------------- answering */
+
+async function answer() {
+  const question = box.value.trim();
+  if (!question) return box.focus();
+  out.innerHTML = "";
+  busy(true, "Reading the course material and asking…");
+  try {
+    renderAnswer(await api("/api/ask", { question }));
+  } catch (error) { fail(error.message); }
+  finally { busy(false); }
+}
+
+function renderAnswer(data) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML =
+    `<div class="head"><span>${esc(data.question)}</span>` +
+    (data.course ? `<span class="badge">${esc(data.course)}</span>` : "") + `</div>` +
+    `<div class="body">${esc(data.answer)}</div>` +
+    `<div class="prov ${data.grounded ? "grounded" : "ungrounded"}">${esc(data.provenance)}</div>`;
+
+  if (data.material?.length) {
+    const details = document.createElement("details");
+    const used = data.material.filter((m) => m.used).length;
+    details.innerHTML = `<summary>Show the ${data.material.length} items it was given` +
+      (used ? ` — ${used} used` : "") + `</summary>`;
+    data.material.forEach((item) => {
+      const div = document.createElement("div");
+      div.className = "src" + (item.used ? " used" : "");
+      div.innerHTML =
+        `<div class="where">[${item.n}] ${esc(item.source)}` +
+        (item.course ? ` · ${esc(item.course)}` : "") + (item.used ? " · used" : "") + `</div>` +
+        `<div>${esc(item.text)}</div>` +
+        (item.explanation ? `<div class="why">${esc(item.explanation)}</div>` : "");
+      details.appendChild(div);
+    });
+    card.appendChild(details);
+  }
+  out.innerHTML = "";
+  out.appendChild(card);
+}
+
+/* ---------------------------------------------------------------- practice */
+
+async function quiz() {
+  const course = box.value.trim();
+  if (!course) return box.focus();
+  out.innerHTML = "";
+  busy(true, "Finding a question from that course…");
+  try {
+    const exclude = seen[course.toLowerCase()] || [];
+    const data = await api("/api/practice", { course, exclude });
+    (seen[course.toLowerCase()] = exclude).push(data.ref);
+    renderQuestion(data, course);
+  } catch (error) { fail(error.message); }
+  finally { busy(false); }
+}
+
+function renderQuestion(data, typed) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML =
+    `<div class="head"><span>${esc(data.course)}</span>` +
+    `<span class="badge">${esc(data.status.toLowerCase())} · unreviewed</span></div>` +
+    `<div class="body">${esc(data.question)}</div>`;
+
+  const verdict = document.createElement("div");
+
+  data.options.forEach((option) => {
+    const button = document.createElement("button");
+    button.className = "opt";
+    button.innerHTML = `<span class="lab">${esc(option.label)}</span>` +
+                       `<span>${esc(option.text)}</span>`;
+    /* Marked on the server. The page is never sent the key, so it could not mark this itself
+       even if somebody read the source. */
+    button.onclick = async () => {
+      card.querySelectorAll(".opt").forEach((b) => (b.disabled = true));
+      try {
+        const result = await api("/api/practice/answer",
+                                 { ref: data.ref, label: option.label });
+        button.classList.add(result.correct ? "correct" : "wrong");
+        if (!result.correct) {
+          card.querySelectorAll(".opt").forEach((b) => {
+            if (result.answer.split(", ").includes(b.querySelector(".lab").textContent)) {
+              b.classList.add("correct");
+            }
+          });
+        }
+        verdict.className = "verdict " + (result.correct ? "correct" : "wrong");
+        verdict.innerHTML = (result.correct ? "Correct." : `Not quite — ${esc(result.answer)}.`) +
+          (result.explanation ? `<div class="why">${esc(result.explanation)}</div>` : "");
+      } catch (error) {
+        verdict.className = "verdict wrong";
+        verdict.textContent = error.message;
+      }
+    };
+    card.appendChild(button);
+  });
+
+  card.appendChild(verdict);
+
+  const again = document.createElement("button");
+  again.textContent = "Another question";
+  again.style.marginTop = "18px";
+  again.onclick = () => { box.value = typed; quiz(); };
+  card.appendChild(again);
+
+  /* How many are left before it has to write a new one. Stated, so "different every time" is a
+     visible fact rather than a promise. */
+  const note = document.createElement("div");
+  note.className = "prov";
+  note.textContent = data.generated
+    ? `This course's ${data.pool - 1} existing questions were all used, so this one was written just now and stored as a draft.`
+    : `${data.remaining} more unseen in this course, of ${data.pool}. From the ${data.source}.`;
+  card.appendChild(note);
+
+  out.innerHTML = "";
+  out.appendChild(card);
+}
+
+/* ---------------------------------------------------------------- wiring */
+
+$("ask").onclick = answer;
+$("quiz").onclick = quiz;
+box.onkeydown = (event) => {
+  if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); answer(); }
+};
+
+(async function start() {
+  try {
+    const [courses, health] = await Promise.all([
+      (await fetch("/api/courses")).json(),
+      (await fetch("/api/health")).json(),
+    ]);
+    // Three courses to start from, not a list of thirty-three.
+    courses.filter((c) => c.code !== null).slice(0, 3).forEach((course) => {
+      const chip = document.createElement("button");
+      chip.className = "chip";
+      chip.textContent = course.title;
+      chip.onclick = () => { box.value = course.title; quiz(); };
+      $("chips").appendChild(chip);
+    });
+    $("hint").textContent =
+      "Enter answers your question. “Question me” needs a course name and gives you a " +
+      "different one from that course every time — never from another course.";
+    if (!health.model_configured) {
+      busy(true, "No model is configured, so answering will return 503.");
+    }
+  } catch { /* the page still works; the first request reports the real problem */ }
+  box.focus();
+})();
+</script>
+</body>
+</html>

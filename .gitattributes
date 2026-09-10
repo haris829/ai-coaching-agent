@@ -1,0 +1,6 @@
+# Normalise line endings, so a checkout on Windows does not show every file as
+# modified for whoever works on this next.
+* text=auto eol=lf
+
+# Keep the page's markup byte-identical.
+*.html text eol=lf

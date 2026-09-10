@@ -1,0 +1,14 @@
+# Credentials. Never commit, never send.
+.env
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/

@@ -1,0 +1,19 @@
+# Lint configuration, so `python -m ruff check .` is meaningful out of the box.
+# These are the settings the code was written and checked against.
+
+line-length = 110
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+ignore = [
+    # FastAPI's Depends() default-argument idiom. Unavoidable in a FastAPI app.
+    "B008",
+    # timezone.utc is kept over the datetime.UTC alias.
+    "UP017",
+]
+
+[lint.isort]
+# So this package's own imports are grouped apart from third-party ones.
+known-first-party = ["qgen", "tests"]
